@@ -1,0 +1,21 @@
+# Core dependencies
+requests>=2.31.0
+paramiko>=3.4.0
+docker>=7.0.0
+gitpython>=3.1.40
+pyyaml>=6.0.1
+click>=8.1.7
+
+# Development dependencies
+pytest>=7.4.3
+black>=23.11.0
+flake8>=6.1.0
+pre-commit>=3.5.0
+
+# Logging and monitoring
+loguru>=0.7.2
+rich>=13.7.0
+
+# Async support
+asyncio>=3.4.3
+aiohttp>=3.9.1

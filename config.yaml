@@ -1,0 +1,42 @@
+# Remote Developer Configuration
+
+# Claude Code settings
+claude_code_version: latest
+claude_auto_confirm: true
+claude_verbose: false
+
+# Git settings
+git_auto_push: true
+git_commit_prefix: "Claude Code: "
+
+# Deployment settings
+deploy_script: ./deploy.sh
+deploy_environment: production
+
+# Devpod settings
+devpod:
+  default_image: ubuntu:22.04
+  resources:
+    cpu: "2"
+    memory: "4Gi"
+  workspace_path: /workspace
+
+# Logging settings
+log_level: INFO
+log_file: logs/remote-developer.log
+
+# Task execution settings
+task:
+  timeout: 3600  # 1 hour
+  max_retries: 3
+  retry_delay: 30
+
+# Security settings
+security:
+  ssh_key_path: ~/.ssh/id_rsa
+  allowed_commands:
+    - git
+    - claude-code
+    - npm
+    - python
+    - pip
