@@ -3,90 +3,107 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Remote Developer Dashboard</title>
+    <title>Remote Developer - Auto PR Generator</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios@1.6.2/dist/axios.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/toastify-js"></script>
     <style>
         .progress-bar {
-            transition: width 0.5s ease-in-out;
+            transition: width 0.3s ease;
         }
-        .log-container {
-            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-        }
+        
+        /* Custom scrollbar for log container */
         .log-container::-webkit-scrollbar {
             width: 8px;
             height: 8px;
         }
+        
         .log-container::-webkit-scrollbar-track {
             background: #1a1a1a;
-        }
-        .log-container::-webkit-scrollbar-thumb {
-            background: #4a4a4a;
             border-radius: 4px;
+        }
+        
+        .log-container::-webkit-scrollbar-thumb {
+            background: #4a5568;
+            border-radius: 4px;
+        }
+        
+        .log-container::-webkit-scrollbar-thumb:hover {
+            background: #718096;
+        }
+        
+        .log-container {
+            scrollbar-width: thin;
+            scrollbar-color: #4a5568 #1a1a1a;
         }
     </style>
 </head>
 <body class="bg-gray-100">
-    <div class="container mx-auto p-4">
-        <h1 class="text-3xl font-bold mb-6">Remote Developer Dashboard</h1>
+    <div class="container mx-auto px-4 py-8">
+        <h1 class="text-3xl font-bold text-center mb-8">Remote Developer - Auto PR Generator</h1>
         
-        <!-- Stats -->
-        <div class="grid grid-cols-4 gap-4 mb-6">
-            <div class="bg-white p-4 rounded-lg shadow">
-                <h3 class="text-gray-500 text-sm">Total Tasks</h3>
-                <p class="text-2xl font-bold" id="totalTasks">0</p>
-            </div>
-            <div class="bg-white p-4 rounded-lg shadow">
-                <h3 class="text-gray-500 text-sm">Running</h3>
-                <p class="text-2xl font-bold text-blue-600" id="runningTasks">0</p>
-            </div>
-            <div class="bg-white p-4 rounded-lg shadow">
-                <h3 class="text-gray-500 text-sm">Completed</h3>
-                <p class="text-2xl font-bold text-green-600" id="completedTasks">0</p>
-            </div>
-            <div class="bg-white p-4 rounded-lg shadow">
-                <h3 class="text-gray-500 text-sm">Failed</h3>
-                <p class="text-2xl font-bold text-red-600" id="failedTasks">0</p>
-            </div>
-        </div>
-        
-        <!-- Create Task Form -->
-        <div class="bg-white p-6 rounded-lg shadow mb-6">
+        <!-- Input Form -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-8">
             <h2 class="text-xl font-semibold mb-4">Create New Task</h2>
-            <form id="createTaskForm" class="space-y-4">
+            <form id="taskForm" class="space-y-4">
                 <div>
-                    <label class="block text-sm font-medium text-gray-700">DevPod Name</label>
-                    <input type="text" name="devpod_name" required 
-                           class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border"
+                    <label class="block text-sm font-medium text-gray-700 mb-1">DevPod Name</label>
+                    <input type="text" id="devpod_name" name="devpod_name" required
+                           class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                            placeholder="e.g., auto-worker-demo">
                 </div>
+                
                 <div>
-                    <label class="block text-sm font-medium text-gray-700">GitHub Repository</label>
-                    <input type="text" name="github_repo" required
-                           class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border"
+                    <label class="block text-sm font-medium text-gray-700 mb-1">GitHub Repository</label>
+                    <input type="text" id="github_repo" name="github_repo" required
+                           class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                            placeholder="e.g., username/repository">
                 </div>
+                
                 <div>
-                    <label class="block text-sm font-medium text-gray-700">GitHub Token</label>
-                    <input type="password" name="github_token" required
-                           class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border"
-                           placeholder="ghp_...">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">GitHub Token</label>
+                    <input type="password" id="github_token" name="github_token" required
+                           class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                           placeholder="github_pat_...">
                 </div>
+                
                 <div>
-                    <label class="block text-sm font-medium text-gray-700">Task Description</label>
-                    <textarea name="task_description" required rows="3"
-                              class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border"
-                              placeholder="Describe what you want Claude to do..."></textarea>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Task Description</label>
+                    <textarea id="task_description" name="task_description" required rows="3"
+                              class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              placeholder="e.g., Create a streamlit app that displays input text"></textarea>
                 </div>
+                
                 <button type="submit" 
-                        class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
+                        class="w-full bg-blue-500 text-white py-2 px-4 rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500">
                     Create Task
                 </button>
             </form>
         </div>
         
+        <!-- Dashboard Stats -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+            <div class="bg-white rounded-lg shadow p-4">
+                <h3 class="text-sm text-gray-500">Total Tasks</h3>
+                <p class="text-2xl font-bold" id="totalTasks">0</p>
+            </div>
+            <div class="bg-white rounded-lg shadow p-4">
+                <h3 class="text-sm text-gray-500">Running</h3>
+                <p class="text-2xl font-bold text-blue-500" id="runningTasks">0</p>
+            </div>
+            <div class="bg-white rounded-lg shadow p-4">
+                <h3 class="text-sm text-gray-500">Completed</h3>
+                <p class="text-2xl font-bold text-green-500" id="completedTasks">0</p>
+            </div>
+            <div class="bg-white rounded-lg shadow p-4">
+                <h3 class="text-sm text-gray-500">Failed</h3>
+                <p class="text-2xl font-bold text-red-500" id="failedTasks">0</p>
+            </div>
+        </div>
+        
         <!-- Active Tasks -->
-        <div class="bg-white p-6 rounded-lg shadow">
+        <div class="bg-white rounded-lg shadow-md p-6">
             <h2 class="text-xl font-semibold mb-4">Active Tasks</h2>
             <div id="activeTasks" class="space-y-4">
                 <!-- Tasks will be dynamically added here -->
@@ -94,65 +111,70 @@
         </div>
     </div>
     
-    <!-- Create PR Dialog -->
-    <div id="prDialog" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full">
-        <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
-            <h3 class="text-lg font-medium leading-6 text-gray-900 mb-4">Create Pull Request</h3>
-            <form id="createPRForm" class="space-y-4">
-                <input type="hidden" name="devpod_name">
-                <input type="hidden" name="github_repo">
-                <input type="hidden" name="github_token">
-                <div>
-                    <label class="block text-sm font-medium text-gray-700">PR Title</label>
-                    <input type="text" name="pr_title" required
-                           class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border">
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700">PR Description</label>
-                    <textarea name="pr_body" rows="3"
-                              class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border"></textarea>
-                </div>
-                <div class="flex space-x-2">
-                    <button type="submit" class="bg-purple-500 text-white px-4 py-2 rounded hover:bg-purple-600">
-                        Create PR
-                    </button>
-                    <button type="button" onclick="closePRDialog()" class="bg-gray-300 text-gray-700 px-4 py-2 rounded hover:bg-gray-400">
-                        Cancel
-                    </button>
-                </div>
-            </form>
-        </div>
-    </div>
-    
     <script>
-        // Store active tasks
-        const activeTasks = new Map();
+        let activeTasks = new Map();
         
-        // Create task
-        document.getElementById('createTaskForm').addEventListener('submit', async (e) => {
+        // Load saved values from localStorage on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedDevpod = localStorage.getItem('devpod_name');
+            const savedRepo = localStorage.getItem('github_repo');
+            const savedToken = localStorage.getItem('github_token');
+            
+            if (savedDevpod) document.getElementById('devpod_name').value = savedDevpod;
+            if (savedRepo) document.getElementById('github_repo').value = savedRepo;
+            if (savedToken) document.getElementById('github_token').value = savedToken;
+        });
+        
+        // Form submission
+        document.getElementById('taskForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const formData = new FormData(e.target);
-            const data = Object.fromEntries(formData);
+            
+            const formData = {
+                devpod_name: document.getElementById('devpod_name').value,
+                github_repo: document.getElementById('github_repo').value,
+                github_token: document.getElementById('github_token').value,
+                task_description: document.getElementById('task_description').value
+            };
+            
+            // Save values to localStorage (except task description)
+            localStorage.setItem('devpod_name', formData.devpod_name);
+            localStorage.setItem('github_repo', formData.github_repo);
+            localStorage.setItem('github_token', formData.github_token);
             
             try {
-                const response = await axios.post('/api/create-task', data);
+                const response = await axios.post('/api/create-task', formData);
                 const taskId = response.data.task_id;
                 
-                // Reset form
-                e.target.reset();
+                // Clear only task description
+                document.getElementById('task_description').value = '';
                 
-                // Start monitoring the new task
+                // Start monitoring task
                 monitorTask(taskId);
                 
-                alert(`Task created: ${taskId}`);
+                // Show success toast
+                Toastify({
+                    text: "Task created successfully!",
+                    duration: 3000,
+                    gravity: "top",
+                    position: "right",
+                    backgroundColor: "linear-gradient(to right, #00b09b, #96c93d)",
+                }).showToast();
             } catch (error) {
-                alert('Error creating task: ' + (error.response?.data?.error || error.message));
+                Toastify({
+                    text: 'Error creating task: ' + (error.response?.data?.error || error.message),
+                    duration: 5000,
+                    gravity: "top",
+                    position: "right",
+                    backgroundColor: "linear-gradient(to right, #ff5f6d, #ffc371)",
+                }).showToast();
             }
         });
         
-        // Monitor a task
+        // Monitor a specific task
         function monitorTask(taskId) {
-            // Poll for task status
+            // Start streaming logs immediately
+            streamTaskLogs(taskId);
+            
             const interval = setInterval(async () => {
                 try {
                     const response = await axios.get(`/api/task-status/${taskId}`);
@@ -164,16 +186,17 @@
                         clearInterval(interval);
                     }
                 } catch (error) {
-                    console.error('Error monitoring task:', error);
+                    console.error('Error fetching task status:', error);
                     clearInterval(interval);
                 }
-            }, 2000);
+            }, 2000); // Update every 2 seconds
         }
         
         // Update task display
         function updateTaskDisplay(taskId, task) {
             let taskElement = document.getElementById(`task-${taskId}`);
             
+            // Debug logging
             console.log(`Task ${taskId} data:`, task);
             
             if (!taskElement) {
@@ -373,12 +396,6 @@
                 return;
             }
             
-            // Clear existing event source if any
-            const taskElement = document.getElementById(`task-${taskId}`);
-            if (taskElement && taskElement.eventSource) {
-                taskElement.eventSource.close();
-            }
-            
             const eventSource = new EventSource(`/api/task-logs/${taskId}/stream`);
             
             eventSource.onmessage = (event) => {
@@ -397,35 +414,36 @@
                         const logLine = document.createElement('div');
                         logLine.textContent = data.log;
                         logLine.className = 'py-0.5';
-                        
-                        // Highlight Claude status updates
-                        if (data.log.includes('CLAUDE_STATUS:')) {
-                            logLine.className += ' text-yellow-400 font-semibold';
-                        } else if (data.log.includes('CLAUDE_PROGRESS:')) {
-                            logLine.className += ' text-cyan-400';
-                        } else if (data.log.includes('CLAUDE_OUTPUT_PREVIEW:')) {
-                            logLine.className += ' text-purple-400';
-                        } else if (data.log.includes('✅') || data.log.includes('completed')) {
-                            logLine.className += ' text-green-400';
-                        } else if (data.log.includes('❌') || data.log.includes('failed') || data.log.includes('Error:')) {
-                            logLine.className += ' text-red-400';
-                        } else if (data.log.includes('Claude') || data.log.includes('CLAUDE')) {
-                            logLine.className += ' text-yellow-300';
-                        }
-                        
-                        logsDiv.appendChild(logLine);
-                        
-                        // Auto-scroll to bottom
-                        logsDiv.scrollTop = logsDiv.scrollHeight;
+                    
+                    // Highlight Claude status updates
+                    if (data.log.includes('CLAUDE_STATUS:')) {
+                        logLine.className += ' text-yellow-400 font-semibold';
+                    } else if (data.log.includes('CLAUDE_PROGRESS:')) {
+                        logLine.className += ' text-cyan-400';
+                    } else if (data.log.includes('CLAUDE_OUTPUT_PREVIEW:')) {
+                        logLine.className += ' text-purple-400';
+                    } else if (data.log.includes('✅') || data.log.includes('completed')) {
+                        logLine.className += ' text-green-400';
+                    } else if (data.log.includes('❌') || data.log.includes('failed') || data.log.includes('Error:')) {
+                        logLine.className += ' text-red-400';
                     }
                     
-                    if (data.complete) {
-                        console.log(`Stream complete for task ${taskId}`);
-                        eventSource.close();
-                        if (taskElement) {
-                            taskElement.dataset.streaming = 'false';
-                        }
+                    logsDiv.appendChild(logLine);
+                    
+                    // Auto-scroll to bottom
+                    logsDiv.scrollTop = logsDiv.scrollHeight;
+                }
+                
+                if (data.complete) {
+                    // Task completed, close the stream
+                    eventSource.close();
+                    const taskElement = document.getElementById(`task-${taskId}`);
+                    if (taskElement) {
+                        taskElement.dataset.streaming = 'false';
                     }
+                }
+            };
+            
                 } catch (error) {
                     console.error('Error processing log event:', error, event.data);
                 }
@@ -433,63 +451,49 @@
             
             eventSource.onerror = (error) => {
                 console.error('Log stream error for task:', taskId, error);
-                // Add error message to logs
-                const errorLine = document.createElement('div');
-                errorLine.textContent = '--- Stream connection lost ---';
-                errorLine.className = 'py-0.5 text-red-400';
-                logsDiv.appendChild(errorLine);
-                
                 eventSource.close();
-                if (taskElement) {
-                    taskElement.dataset.streaming = 'false';
-                }
             };
             
             // Store event source for cleanup
+            const taskElement = document.getElementById(`task-${taskId}`);
             if (taskElement) {
                 taskElement.eventSource = eventSource;
             }
         }
         
-        // Show PR dialog
+        // Show PR creation dialog
         function showPRDialog(devpodName, githubRepo, githubToken) {
-            const form = document.getElementById('createPRForm');
-            form.devpod_name.value = devpodName;
-            form.github_repo.value = githubRepo;
-            form.github_token.value = githubToken;
-            form.pr_title.value = '';
-            form.pr_body.value = '';
+            const prTitle = prompt('Enter PR title:');
+            if (!prTitle) return;
             
-            document.getElementById('prDialog').classList.remove('hidden');
+            const prBody = prompt('Enter PR description (optional):') || 'Pull request created by Remote Developer';
+            
+            createPR(devpodName, githubRepo, githubToken, prTitle, prBody);
         }
         
-        // Close PR dialog
-        function closePRDialog() {
-            document.getElementById('prDialog').classList.add('hidden');
-        }
-        
-        // Create PR
-        document.getElementById('createPRForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const formData = new FormData(e.target);
-            const data = Object.fromEntries(formData);
-            
+        // Create pull request
+        async function createPR(devpodName, githubRepo, githubToken, prTitle, prBody) {
             try {
-                const response = await axios.post('/api/create-pr', data);
+                const response = await axios.post('/api/create-pr', {
+                    devpod_name: devpodName,
+                    github_repo: githubRepo,
+                    github_token: githubToken,
+                    pr_title: prTitle,
+                    pr_body: prBody
+                });
+                
                 if (response.data.status === 'success') {
-                    alert('Pull request created successfully!');
-                    closePRDialog();
-                    updateDashboard();
+                    alert('PR created successfully!');
+                    window.open(response.data.pr_url, '_blank');
+                    updateDashboard(); // Refresh to update PR status
                 }
             } catch (error) {
                 alert('Error creating PR: ' + (error.response?.data?.error || error.message));
             }
-        });
+        }
         
-        // Initial dashboard update
+        // Initial dashboard update and periodic refresh
         updateDashboard();
-        
-        // Update dashboard every 5 seconds
         setInterval(updateDashboard, 5000);
     </script>
 </body>
