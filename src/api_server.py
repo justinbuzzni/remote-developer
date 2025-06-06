@@ -13,6 +13,8 @@ import tempfile
 import queue
 import pickle
 from pathlib import Path
+import select
+import fcntl
 
 from .remote_developer import RemoteDeveloper
 from .config import Config
@@ -154,9 +156,14 @@ def add_log(task_id: str, message: str):
         if task_id in tasks_status:
             tasks_status[task_id]['logs'].append(message)
             tasks_status[task_id]['last_updated'] = datetime.now().isoformat()
+            
+            # Auto-detect completion from log messages
+            if any(keyword in message.lower() for keyword in ['completed!', 'finished!', 'all tasks finished']):
+                if tasks_status[task_id]['status'] != 'completed':
+                    logger.info(f"Auto-detected task completion for {task_id}")
     
-    # Save task status to file
-    save_task_status(task_id)
+    # Only save task status periodically to avoid performance issues
+    # save_task_status(task_id)  # Commented out for performance
     
     # Notify all streams watching this task
     with log_streams_lock:
@@ -166,6 +173,45 @@ def add_log(task_id: str, message: str):
                     stream_queue.put(message)
                 except:
                     pass
+
+def parse_claude_output(task_id: str, line_text: str):
+    """Parse Claude-specific output patterns for better progress tracking"""
+    with tasks_lock:
+        if task_id not in tasks_status:
+            return
+            
+        # Parse various Claude output patterns
+        if "CLAUDE_STATUS:" in line_text:
+            if "RUNNING" in line_text and "minutes" in line_text:
+                try:
+                    minutes = int(line_text.split('(')[1].split(' ')[0])
+                    tasks_status[task_id]['claude_runtime'] = minutes * 60
+                except:
+                    pass
+            status = line_text.split("CLAUDE_STATUS:")[1].strip().split()[0]
+            tasks_status[task_id]['claude_status'] = status
+            tasks_status[task_id]['last_updated'] = datetime.now().isoformat()
+            # save_task_status(task_id)  # Commented out for performance
+            
+        # Parse Claude progress indicators
+        elif "█" in line_text or "▓" in line_text:  # Progress bar
+            tasks_status[task_id]['claude_progress_bar'] = line_text
+            
+        # Parse file operations
+        elif any(keyword in line_text.lower() for keyword in ['creating', 'writing', 'updating', 'modifying']):
+            if 'claude_files_modified' not in tasks_status[task_id]:
+                tasks_status[task_id]['claude_files_modified'] = []
+            tasks_status[task_id]['claude_files_modified'].append(line_text)
+            
+        # Parse thinking/planning output
+        elif any(keyword in line_text.lower() for keyword in ['thinking', 'planning', 'analyzing']):
+            tasks_status[task_id]['claude_thinking'] = True
+            
+        # Parse completion indicators
+        elif any(keyword in line_text.lower() for keyword in ['completed', 'finished', 'done', '완료']):
+            tasks_status[task_id]['claude_status'] = 'COMPLETED'
+            tasks_status[task_id]['last_updated'] = datetime.now().isoformat()
+            # save_task_status(task_id)  # Commented out for performance
 
 def get_pod_name(devpod_name: str) -> str:
     """Get pod name for devpod with timeout"""
@@ -214,9 +260,102 @@ def exec_in_devpod(devpod_name: str, command: str, pod_name: str = None) -> subp
     
     # Escape single quotes in command
     escaped_cmd = command.replace("'", "'\"'\"'")
-    # Add timeout to kubectl exec
-    kubectl_cmd = f"timeout 30 kubectl exec -n devpod {pod_name} -- bash -c '{escaped_cmd}'"
+    # Add timeout to kubectl exec (increased for long operations)
+    kubectl_cmd = f"timeout 120 kubectl exec -n devpod {pod_name} -- bash -c '{escaped_cmd}'"
     return subprocess.run(kubectl_cmd, shell=True, capture_output=True, text=True)
+
+def exec_in_devpod_stream_realtime(devpod_name: str, command: str, task_id: str, pod_name: str = None):
+    """Execute command in devpod with real-time streaming using non-blocking I/O"""
+    if not pod_name:
+        logger.warning(f"Pod name not provided for streaming execution, getting it now...")
+        try:
+            pod_name = get_pod_name(devpod_name)
+        except Exception as e:
+            logger.error(f"Failed to get pod name: {e}")
+            add_log(task_id, f"Error: Failed to get pod name: {e}")
+            return -1
+    
+    # Escape single quotes in command
+    escaped_cmd = command.replace("'", "'\"'\"'")
+    # Note: -t flag removed as it can cause issues with non-interactive scripts
+    kubectl_cmd = f"kubectl exec -n devpod {pod_name} -- bash -c '{escaped_cmd}'"
+    
+    try:
+        # Set environment variables to disable buffering
+        env = os.environ.copy()
+        env['PYTHONUNBUFFERED'] = '1'
+        
+        # Run the command with real-time output capture
+        process = subprocess.Popen(
+            kubectl_cmd, 
+            shell=True, 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.STDOUT, 
+            bufsize=0,  # Unbuffered
+            env=env
+        )
+        
+        # Make stdout non-blocking
+        fd = process.stdout.fileno()
+        fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+        
+        output_buffer = b""
+        while True:
+            # Check if process has ended
+            poll_status = process.poll()
+            
+            # Use select to check if data is available
+            ready, _, _ = select.select([process.stdout], [], [], 0.1)
+            
+            if ready:
+                try:
+                    # Read available data
+                    chunk = os.read(fd, 4096)
+                    if chunk:
+                        output_buffer += chunk
+                        
+                        # Process complete lines
+                        while b'\n' in output_buffer:
+                            line, output_buffer = output_buffer.split(b'\n', 1)
+                            try:
+                                line_text = line.decode('utf-8', errors='replace').rstrip()
+                                add_log(task_id, line_text)
+                                
+                                # Parse Claude status updates
+                                parse_claude_output(task_id, line_text)
+                            except Exception as e:
+                                logger.warning(f"Error decoding line: {e}")
+                except OSError:
+                    # No data available
+                    pass
+            
+            # If process ended and no more data, break
+            if poll_status is not None and not ready:
+                # Process any remaining data
+                if output_buffer:
+                    try:
+                        line_text = output_buffer.decode('utf-8', errors='replace').rstrip()
+                        if line_text:
+                            add_log(task_id, line_text)
+                    except:
+                        pass
+                break
+        
+        return_code = process.wait()
+        
+        # Log process completion
+        if return_code == 0:
+            add_log(task_id, f"✅ Real-time process completed successfully (exit code: {return_code})")
+        else:
+            add_log(task_id, f"⚠️ Real-time process finished with exit code: {return_code}")
+            
+        return return_code
+        
+    except Exception as e:
+        logger.error(f"Error in real-time streaming execution: {e}")
+        add_log(task_id, f"❌ Streaming error: {e}")
+        return -1
 
 def exec_in_devpod_stream_simple(devpod_name: str, command: str, task_id: str, pod_name: str = None):
     """Execute command in devpod with simpler streaming output - similar to manual script"""
@@ -252,22 +391,14 @@ def exec_in_devpod_stream_simple(devpod_name: str, command: str, task_id: str, p
                 add_log(task_id, line_text)
                 
                 # Parse Claude status updates
-                with tasks_lock:
-                    if task_id in tasks_status:
-                        if "CLAUDE_STATUS: RUNNING" in line_text and "minutes" in line_text:
-                            try:
-                                minutes = int(line_text.split('(')[1].split(' ')[0])
-                                tasks_status[task_id]['claude_runtime'] = minutes * 60
-                            except:
-                                pass
-                        elif "CLAUDE_STATUS:" in line_text:
-                            status = line_text.split("CLAUDE_STATUS:")[1].strip().split()[0]
-                            tasks_status[task_id]['claude_status'] = status
-                            tasks_status[task_id]['last_updated'] = datetime.now().isoformat()
-                            save_task_status(task_id)
+                parse_claude_output(task_id, line_text)
         
         # Wait for process to complete
         return_code = process.wait()
+        
+        # Log completion immediately
+        logger.info(f"Streaming completed for task {task_id} with return code {return_code}")
+        
         return return_code
         
     except Exception as e:
@@ -279,6 +410,7 @@ def execute_remote_task(task_id: str, devpod_name: str, github_repo: str,
                        github_token: str, task_description: str):
     """Execute task in background thread"""
     devpod_path = '/Users/namsangboy/.local/bin/devpod'
+    task_completed = False
     try:
         with tasks_lock:
             tasks_status[task_id] = {
@@ -459,7 +591,8 @@ echo "Task: {task_description}"
 if command -v claude &> /dev/null; then
     echo "Claude 명령어 위치: $(which claude)"
     
-    # Claude 실행 (타임아웃 5분) - similar to manual script
+    # Simple Claude execution with line buffering for better streaming
+    echo "Executing Claude with line buffering..."
     timeout 300 claude --print "{task_description}" 2>&1 | tee claude_output.txt
     
     echo ""
@@ -473,6 +606,10 @@ fi
 echo ""
 echo "=== 생성된 파일 ==="
 ls -la *.py 2>/dev/null || echo "Python 파일 없음"
+
+# Ensure script exits properly
+echo "=== Script completed ==="
+exit 0
 '''
         
         # Write and execute the script
@@ -493,15 +630,36 @@ ls -la *.py 2>/dev/null || echo "Python 파일 없음"
         # Execute Claude script with simpler streaming output
         execute_cmd = f'cd ~/{repo_name} && bash run_claude.sh 2>&1'
         
-        # Use simpler streaming execution
+        # Use simpler streaming execution for better reliability
+        add_log(task_id, "Starting Claude execution with streaming...")
         returncode = exec_in_devpod_stream_simple(devpod_name, execute_cmd, task_id, pod_name)
+        
+        # Small delay to ensure all output is captured
+        time.sleep(1)
+        
+        add_log(task_id, f"Claude script execution finished with return code: {returncode}")
         
         # Check if Claude succeeded
         claude_failed = returncode != 0
         
+        # Update Claude status based on execution result
+        with tasks_lock:
+            if claude_failed:
+                tasks_status[task_id]['claude_status'] = 'FAILED'
+            else:
+                tasks_status[task_id]['claude_status'] = 'COMPLETED'
+            tasks_status[task_id]['last_updated'] = datetime.now().isoformat()
+        save_task_status(task_id)
+        
+        # Log the result after releasing the lock
+        if claude_failed:
+            add_log(task_id, f"Claude execution failed with return code: {returncode}")
+        else:
+            add_log(task_id, "Claude execution completed successfully")
+        
         # If Claude fails or is not installed, use fallback
         if claude_failed:
-            add_log(task_id, "Claude Code not available, using fallback implementation...")
+            add_log(task_id, "Using fallback implementation...")
             
             # Fallback: Create files based on task description
             if "streamlit" in task_description.lower():
@@ -580,13 +738,18 @@ ls -la
                 result = exec_in_devpod(devpod_name, fallback_cmd, pod_name)
                 
                 add_log(task_id, "Fallback execution completed")
-        else:
-            add_log(task_id, "Claude execution completed successfully")
+                # Update status after fallback
+                with tasks_lock:
+                    tasks_status[task_id]['claude_status'] = 'FALLBACK_COMPLETED'
+                    tasks_status[task_id]['last_updated'] = datetime.now().isoformat()
+                save_task_status(task_id)
         
         # Step 7: Commit changes
+        add_log(task_id, "=== Moving to commit phase ===")
         with tasks_lock:
             tasks_status[task_id]['status'] = 'committing_changes'
             tasks_status[task_id]['progress'] = 75
+        save_task_status(task_id)  # Save status at this important transition
         add_log(task_id, 'Committing changes...')
         
         commit_cmds = [
@@ -595,12 +758,17 @@ ls -la
         ]
         
         for cmd in commit_cmds:
-            exec_in_devpod(devpod_name, cmd, pod_name)
+            add_log(task_id, f"Executing: {cmd.split('&&')[-1].strip()}")
+            result = exec_in_devpod(devpod_name, cmd, pod_name)
+            if result.returncode != 0:
+                add_log(task_id, f"Warning: Command failed with error: {result.stderr}")
         
         # Step 8: Check if a server was created and run it
+        add_log(task_id, "=== Moving to server check phase ===")
         with tasks_lock:
             tasks_status[task_id]['status'] = 'checking_server'
             tasks_status[task_id]['progress'] = 85
+        save_task_status(task_id)  # Save status at this important transition
         add_log(task_id, 'Checking for server applications...')
         
         # Store server info
@@ -610,7 +778,8 @@ ls -la
         req_check = exec_in_devpod(devpod_name, f'cd ~/{repo_name} && [ -f requirements.txt ] && echo "FOUND"', pod_name)
         if "FOUND" in req_check.stdout:
             add_log(task_id, 'Installing Python dependencies...')
-            exec_in_devpod(devpod_name, f'cd ~/{repo_name} && pip3 install --break-system-packages -r requirements.txt || true', pod_name)
+            install_result = exec_in_devpod(devpod_name, f'cd ~/{repo_name} && pip3 install --break-system-packages -r requirements.txt || true', pod_name)
+            add_log(task_id, f'Dependencies installation completed (return code: {install_result.returncode})')
         
         # Check for Streamlit app
         streamlit_check = exec_in_devpod(devpod_name, f'cd ~/{repo_name} && ([ -f app.py ] || [ -f streamlit_app.py ]) && grep -l "streamlit" *.py 2>/dev/null | head -1', pod_name)
@@ -646,23 +815,41 @@ ls -la
             server_started = True
         
         # Complete - even if server is running
+        add_log(task_id, "=== COMPLETING TASK ===")
         with tasks_lock:
             tasks_status[task_id]['status'] = 'completed'
             tasks_status[task_id]['progress'] = 100
             tasks_status[task_id]['branch_name'] = branch_name
+            tasks_status[task_id]['last_updated'] = datetime.now().isoformat()
             if server_started:
                 tasks_status[task_id]['server_running'] = True
+        save_task_status(task_id)
+        add_log(task_id, f"Task status saved as 'completed' with progress 100%")
         
         if server_started:
             add_log(task_id, f'✅ Task completed! Server is running. Branch: {branch_name}')
         else:
             add_log(task_id, f'✅ Task completed! Branch: {branch_name}')
             
+        # Final completion log
+        add_log(task_id, f'🎉 All tasks finished! Status: completed')
+        task_completed = True
+            
     except Exception as e:
+        logger.error(f"Task {task_id} failed with exception: {e}")
         with tasks_lock:
             tasks_status[task_id]['status'] = 'failed'
             tasks_status[task_id]['error'] = str(e)
-        add_log(task_id, f'Error: {str(e)}')
+            tasks_status[task_id]['last_updated'] = datetime.now().isoformat()
+        save_task_status(task_id)
+        add_log(task_id, f'❌ Error: {str(e)}')
+        add_log(task_id, f'💥 Task failed! Status: failed')
+    finally:
+        # Ensure task status is properly saved
+        logger.info(f"Task {task_id} execution completed. Success: {task_completed}")
+        if task_id in tasks_status:
+            logger.info(f"Final task status: {tasks_status[task_id].get('status', 'unknown')}")
+            save_task_status(task_id)
 
 @app.route('/')
 def index():
@@ -873,8 +1060,14 @@ def stream_task_logs(task_id):
                 with tasks_lock:
                     if task_id in tasks_status:
                         status = tasks_status[task_id]['status']
+                        claude_status = tasks_status[task_id].get('claude_status', '')
+                        progress = tasks_status[task_id].get('progress', 0)
+                        
+                        # Send status update
+                        yield f"data: {json.dumps({'status': status, 'claude_status': claude_status, 'progress': progress})}\n\n"
+                        
                         if status in ['completed', 'failed']:
-                            yield f"data: {json.dumps({'status': status, 'complete': True})}\n\n"
+                            yield f"data: {json.dumps({'status': status, 'complete': True, 'final': True})}\n\n"
                             break
                             
         finally:

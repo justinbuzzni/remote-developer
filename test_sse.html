@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SSE Test</title>
+</head>
+<body>
+    <h1>SSE Connection Test</h1>
+    <div id="status">Connecting...</div>
+    <div id="logs"></div>
+    
+    <script>
+        console.log('Starting SSE test');
+        const eventSource = new EventSource('http://localhost:15001/api/task-logs/task-1749213471/stream');
+        
+        eventSource.onopen = function(event) {
+            console.log('EventSource opened:', event);
+            document.getElementById('status').innerText = 'Connected';
+        };
+        
+        eventSource.onmessage = function(event) {
+            console.log('Message received:', event.data);
+            const data = JSON.parse(event.data);
+            const logsDiv = document.getElementById('logs');
+            logsDiv.innerHTML += '<div>' + data.log + '</div>';
+        };
+        
+        eventSource.onerror = function(event) {
+            console.error('SSE Error:', event);
+            document.getElementById('status').innerText = 'Error: ' + event.type;
+        };
+    </script>
+</body>
+</html>
