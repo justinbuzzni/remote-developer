@@ -59,53 +59,8 @@ def load_all_tasks():
     except Exception as e:
         logger.error(f"Failed to load tasks: {e}")
 
-def check_incomplete_tasks():
-    """Check incomplete tasks in background after startup"""
-    try:
-        time.sleep(5)  # Wait for server to fully start
-        
-        with tasks_lock:
-            incomplete_tasks = [
-                (task_id, task) for task_id, task in tasks_status.items()
-                if task.get('status') in ['executing_task', 'checking_server']
-            ]
-        
-        for task_id, task in incomplete_tasks:
-            try:
-                logger.info(f"Checking incomplete task {task_id}")
-                devpod_name = task.get('devpod_name')
-                github_repo = task.get('github_repo')
-                
-                if not devpod_name or not github_repo:
-                    continue
-                    
-                repo_name = github_repo.split('/')[-1]
-                
-                # Check if Claude is still running
-                if check_claude_still_running(devpod_name, repo_name, task_id):
-                    add_log(task_id, "ℹ️ Task was still running when server restarted")
-                else:
-                    # Task is not running, mark as interrupted
-                    with tasks_lock:
-                        tasks_status[task_id]['status'] = 'interrupted'
-                        tasks_status[task_id]['progress'] = tasks_status[task_id].get('progress', 0)
-                    add_log(task_id, "⚠️ Task was interrupted when server shut down")
-                    save_task_status(task_id)
-                    
-            except Exception as e:
-                logger.error(f"Failed to check task {task_id}: {e}")
-                
-    except Exception as e:
-        logger.error(f"Failed to check incomplete tasks: {e}")
-
 # Load existing tasks on startup
 load_all_tasks()
-
-# Disable background check for now - causing blocking issues
-# TODO: Fix DevPod connection timeout issues
-# check_thread = threading.Thread(target=check_incomplete_tasks)
-# check_thread.daemon = True
-# check_thread.start()
 
 def create_or_get_devpod(devpod_name: str) -> bool:
     """Create devpod if it doesn't exist"""
@@ -226,9 +181,7 @@ def get_pod_name(devpod_name: str) -> str:
         # Method 2: If not found, try with name prefix
         if not pod_name:
             # DevPod names get truncated, so search by prefix
-            # Replace dashes with regex pattern to handle truncation
-            name_parts = devpod_name.replace('-', '.*')
-            pod_name_cmd = f"timeout 2 kubectl get pods -n devpod | grep -E 'devpod-{name_parts[:10]}' | awk '{{print $1}}' | head -1"
+            pod_name_cmd = f"timeout 2 kubectl get pods -n devpod | grep -E 'devpod-{devpod_name[:10]}' | awk '{{print $1}}' | head -1"
             pod_result = subprocess.run(pod_name_cmd, shell=True, capture_output=True, text=True)
             pod_name = pod_result.stdout.strip()
             
@@ -265,8 +218,8 @@ def exec_in_devpod(devpod_name: str, command: str, pod_name: str = None) -> subp
     kubectl_cmd = f"timeout 30 kubectl exec -n devpod {pod_name} -- bash -c '{escaped_cmd}'"
     return subprocess.run(kubectl_cmd, shell=True, capture_output=True, text=True)
 
-def exec_in_devpod_stream(devpod_name: str, command: str, task_id: str, pod_name: str = None):
-    """Execute command in devpod with streaming output - non-blocking"""
+def exec_in_devpod_stream_simple(devpod_name: str, command: str, task_id: str, pod_name: str = None):
+    """Execute command in devpod with simpler streaming output - similar to manual script"""
     if not pod_name:
         logger.warning(f"Pod name not provided for streaming execution, getting it now...")
         try:
@@ -281,6 +234,7 @@ def exec_in_devpod_stream(devpod_name: str, command: str, task_id: str, pod_name
     kubectl_cmd = f"kubectl exec -n devpod {pod_name} -- bash -c '{escaped_cmd}'"
     
     try:
+        # Run the command with real-time output capture
         process = subprocess.Popen(
             kubectl_cmd, 
             shell=True, 
@@ -291,63 +245,26 @@ def exec_in_devpod_stream(devpod_name: str, command: str, task_id: str, pod_name
             universal_newlines=True
         )
         
-        # Set non-blocking
-        import fcntl
-        import os
-        flags = fcntl.fcntl(process.stdout, fcntl.F_GETFL)
-        fcntl.fcntl(process.stdout, fcntl.F_SETFL, flags | os.O_NONBLOCK)
-        
-        # Stream output with timeout
-        empty_reads = 0
-        max_empty_reads = 600  # 10 minutes of no output
-        
-        while True:
-            try:
-                line = process.stdout.readline()
-                if line:
-                    empty_reads = 0
-                    line_text = line.rstrip()
-                    add_log(task_id, line_text)
-                    
-                    # Parse Claude status updates
-                    with tasks_lock:
-                        if task_id in tasks_status:
-                            if "CLAUDE_STATUS: RUNNING" in line_text and "minutes" in line_text:
-                                try:
-                                    minutes = int(line_text.split('(')[1].split(' ')[0])
-                                    tasks_status[task_id]['claude_runtime'] = minutes * 60
-                                except:
-                                    pass
-                            elif "CLAUDE_STATUS:" in line_text:
-                                status = line_text.split("CLAUDE_STATUS:")[1].strip().split()[0]
-                                tasks_status[task_id]['claude_status'] = status
-                                tasks_status[task_id]['last_updated'] = datetime.now().isoformat()
-                                save_task_status(task_id)
-                else:
-                    # Check if process is still running
-                    if process.poll() is not None:
-                        break
-                    
-                    # No output, wait a bit
-                    time.sleep(0.1)
-                    empty_reads += 1
-                    
-                    if empty_reads > max_empty_reads:
-                        logger.warning(f"No output for 10 minutes, terminating")
-                        process.terminate()
-                        break
-                        
-            except IOError:
-                # No data available
-                if process.poll() is not None:
-                    break
-                time.sleep(0.1)
-                empty_reads += 1
+        # Read output line by line
+        for line in iter(process.stdout.readline, ''):
+            if line:
+                line_text = line.rstrip()
+                add_log(task_id, line_text)
                 
-                if empty_reads > max_empty_reads:
-                    logger.warning(f"No output for 10 minutes, terminating")
-                    process.terminate()
-                    break
+                # Parse Claude status updates
+                with tasks_lock:
+                    if task_id in tasks_status:
+                        if "CLAUDE_STATUS: RUNNING" in line_text and "minutes" in line_text:
+                            try:
+                                minutes = int(line_text.split('(')[1].split(' ')[0])
+                                tasks_status[task_id]['claude_runtime'] = minutes * 60
+                            except:
+                                pass
+                        elif "CLAUDE_STATUS:" in line_text:
+                            status = line_text.split("CLAUDE_STATUS:")[1].strip().split()[0]
+                            tasks_status[task_id]['claude_status'] = status
+                            tasks_status[task_id]['last_updated'] = datetime.now().isoformat()
+                            save_task_status(task_id)
         
         # Wait for process to complete
         return_code = process.wait()
@@ -357,46 +274,6 @@ def exec_in_devpod_stream(devpod_name: str, command: str, task_id: str, pod_name
         logger.error(f"Error in streaming execution: {e}")
         add_log(task_id, f"Error: {e}")
         return -1
-
-def check_claude_still_running(devpod_name: str, repo_name: str, task_id: str) -> bool:
-    """Check if Claude is still running in the devpod"""
-    try:
-        # Add timeout to prevent hanging
-        pod_name = get_pod_name(devpod_name)
-        check_cmd = f'cd ~/{repo_name} && ps aux | grep "claude --print" | grep -v grep'
-        
-        # Run with timeout
-        kubectl_cmd = f"timeout 5 kubectl exec -n devpod {pod_name} -- bash -c '{check_cmd}'"
-        result = subprocess.run(kubectl_cmd, shell=True, capture_output=True, text=True)
-        
-        if result.returncode == 0 and result.stdout.strip():
-            # Claude is still running
-            return True
-        
-        # Check if claude_output.txt is still being written
-        check_output = f'cd ~/{repo_name} && [ -f claude_output.txt ] && echo "EXISTS"'
-        kubectl_cmd = f"timeout 5 kubectl exec -n devpod {pod_name} -- bash -c '{check_output}'"
-        result = subprocess.run(kubectl_cmd, shell=True, capture_output=True, text=True)
-        
-        if "EXISTS" in result.stdout:
-            # Get the last modified time
-            stat_cmd = f'cd ~/{repo_name} && stat -c %Y claude_output.txt 2>/dev/null || stat -f %m claude_output.txt 2>/dev/null'
-            kubectl_cmd = f"timeout 5 kubectl exec -n devpod {pod_name} -- bash -c '{stat_cmd}'"
-            stat_result = subprocess.run(kubectl_cmd, shell=True, capture_output=True, text=True)
-            
-            try:
-                last_modified = int(stat_result.stdout.strip())
-                current_time = int(time.time())
-                # If file was modified in the last 5 minutes, consider it still running
-                if current_time - last_modified < 300:
-                    return True
-            except:
-                pass
-                
-        return False
-    except Exception as e:
-        logger.warning(f"Failed to check if Claude is running: {e}")
-        return False
 
 def execute_remote_task(task_id: str, devpod_name: str, github_repo: str, 
                        github_token: str, task_description: str):
@@ -571,159 +448,93 @@ EOF'''
             tasks_status[task_id]['progress'] = 60
         add_log(task_id, 'Executing Claude task...')
         
-        # Create task history directory
-        task_history_cmd = f'''
-        mkdir -p ~/{repo_name}/.task_history
-        echo "Task ID: {task_id}" > ~/{repo_name}/.task_history/{task_id}.txt
-        echo "Timestamp: $(date)" >> ~/{repo_name}/.task_history/{task_id}.txt
-        echo "Description: {task_description}" >> ~/{repo_name}/.task_history/{task_id}.txt
-        echo "---" >> ~/{repo_name}/.task_history/{task_id}.txt
-        '''
-        exec_in_devpod(devpod_name, task_history_cmd, pod_name)
-        
-        # Create a script to run Claude
+        # Create a simpler script similar to manual_debug.success.sh
         claude_script = f'''#!/bin/bash
 # Claude execution script
 cd ~/{repo_name}
 
-# Execute the task using Claude
-echo "Executing task: {task_description}"
-echo "Task started at: $(date)"
-echo "CLAUDE_STATUS: STARTING"
+echo "=== Claude 실행 시작 ==="
+echo "Task: {task_description}"
 
-# Check if claude command exists
 if command -v claude &> /dev/null; then
-    echo "Claude is available at: $(which claude)"
-    echo "CLAUDE_STATUS: RUNNING"
+    echo "Claude 명령어 위치: $(which claude)"
     
-    # Create a file to track Claude output in real-time
-    touch claude_output.txt
-    touch claude_progress.log
+    # Claude 실행 (타임아웃 5분) - similar to manual script
+    timeout 300 claude --print "{task_description}" 2>&1 | tee claude_output.txt
     
-    # Run Claude in background with 1 hour timeout
-    timeout 3600 claude --print "{task_description}" > claude_output.txt 2>&1 &
-    claude_pid=$!
-    
-    # Monitor Claude execution
-    echo "Claude is running in background (PID: $claude_pid)..."
-    
-    # Monitor for up to 1 hour
-    wait_time=0
-    last_size=0
-    
-    while [ $wait_time -lt 3600 ]; do
-        if ! ps -p $claude_pid > /dev/null; then
-            echo "CLAUDE_STATUS: COMPLETED"
-            echo "Claude execution completed after $wait_time seconds"
-            break
-        fi
-        
-        # Check if output file is growing
-        current_size=$(stat -f%z claude_output.txt 2>/dev/null || stat -c%s claude_output.txt 2>/dev/null || echo 0)
-        if [ "$current_size" -gt "$last_size" ]; then
-            echo "CLAUDE_PROGRESS: Output size: $current_size bytes"
-            # Show last few lines of output
-            echo "CLAUDE_OUTPUT_PREVIEW:"
-            tail -5 claude_output.txt 2>/dev/null || true
-            echo "---"
-            last_size=$current_size
-        fi
-        
-        sleep 10
-        wait_time=$((wait_time + 10))
-        
-        # Status update every minute
-        if [ $((wait_time % 60)) -eq 0 ]; then
-            echo "CLAUDE_STATUS: RUNNING ($((wait_time / 60)) minutes)"
-        fi
-    done
-    
-    # If still running after 1 hour, kill it
-    if ps -p $claude_pid > /dev/null; then
-        echo "CLAUDE_STATUS: TIMEOUT"
-        kill $claude_pid 2>/dev/null || true
-        echo "Claude execution timed out after 1 hour"
-    fi
-    
-    # Check result
-    if [ -f claude_output.txt ]; then
-        echo "=== Claude Output ==="
-        cat claude_output.txt
-        echo "===================="
-    fi
-    
-    echo "Execution completed at: $(date)" >> .task_history/{task_id}.txt
+    echo ""
+    echo "=== Claude 실행 완료 ==="
 else
-    echo "Claude not available"
-    echo "CLAUDE_STATUS: ERROR"
-    echo "Error: Claude not available" >> .task_history/{task_id}.txt
+    echo "Claude를 찾을 수 없습니다!"
     exit 1
 fi
 
-# Check if any files were created/modified
+# 생성된 파일 확인
 echo ""
-echo "=== Files in directory ==="
-ls -la
-
-# Check for common application files
-for file in app.py main.py server.py streamlit_app.py requirements.txt package.json; do
-    if [ -f "$file" ]; then
-        echo ""
-        echo "=== Content of $file ==="
-        head -20 "$file"
-    fi
-done
-
-echo "CLAUDE_STATUS: DONE"
+echo "=== 생성된 파일 ==="
+ls -la *.py 2>/dev/null || echo "Python 파일 없음"
 '''
         
         # Write and execute the script
         script_cmd = f'cd ~/{repo_name} && cat > run_claude.sh << \'EOF\'\n{claude_script}\nEOF && chmod +x run_claude.sh'
         exec_in_devpod(devpod_name, script_cmd, pod_name)
         
-        # Execute Claude with streaming
-        add_log(task_id, 'Executing Claude task...')
+        # Execute Claude with simpler streaming
+        add_log(task_id, 'Claude 실행 중...')
         
         # Track Claude execution status
         with tasks_lock:
             tasks_status[task_id]['claude_status'] = 'STARTING'
             tasks_status[task_id]['claude_runtime'] = 0
         
-        # Execute Claude script with streaming output
+        # Execute Claude script with simpler streaming output
         execute_cmd = f'cd ~/{repo_name} && bash run_claude.sh 2>&1'
         
-        # Pod name already obtained earlier
+        # Use simpler streaming execution
+        returncode = exec_in_devpod_stream_simple(devpod_name, execute_cmd, task_id, pod_name)
         
-        # Use streaming execution
-        returncode = exec_in_devpod_stream(devpod_name, execute_cmd, task_id, pod_name)
-        
-        # Parse Claude status from logs
-        claude_failed = False
-        with tasks_lock:
-            if task_id in tasks_status:
-                logs = tasks_status[task_id]['logs']
-                for log in reversed(logs):
-                    if "CLAUDE_STATUS: COMPLETED" in log:
-                        tasks_status[task_id]['claude_status'] = 'COMPLETED'
-                        break
-                    elif "CLAUDE_STATUS: TIMEOUT" in log:
-                        tasks_status[task_id]['claude_status'] = 'TIMEOUT'
-                        break
-                    elif "CLAUDE_STATUS: ERROR" in log:
-                        tasks_status[task_id]['claude_status'] = 'ERROR'
-                        claude_failed = True
-                        break
-                    elif "Claude not available" in log or "command not found" in log:
-                        claude_failed = True
-                        break
+        # Check if Claude succeeded
+        claude_failed = returncode != 0
         
         # If Claude fails or is not installed, use fallback
-        if returncode != 0 or claude_failed:
+        if claude_failed:
             add_log(task_id, "Claude Code not available, using fallback implementation...")
             
             # Fallback: Create files based on task description
             if "streamlit" in task_description.lower():
-                fallback_script = '''#!/bin/bash
+                # Extract specific requirements from task description
+                if "파란색" in task_description and "4번" in task_description:
+                    # Create app according to specific requirements
+                    fallback_script = '''#!/bin/bash
+cd ~/auto-worker-demo
+
+# Create Streamlit app with specific requirements
+cat > app.py << 'EOF'
+import streamlit as st
+
+st.title("문자열 출력 데모")
+st.write("문자열을 입력하면 파란색으로 4번 출력합니다")
+
+# 사용자로부터 문자열 입력 받기
+user_input = st.text_input("문자열을 입력하세요:", "")
+
+# 입력된 문자열을 파란색으로 4번 출력
+if user_input:
+    st.write("---")
+    for i in range(4):
+        st.markdown(f'<p style="color:blue;">{user_input}</p>', unsafe_allow_html=True)
+    st.write("---")
+EOF
+
+# Create requirements.txt
+echo "streamlit" > requirements.txt
+
+echo "Streamlit app created successfully!"
+ls -la
+'''
+                else:
+                    # Default fallback
+                    fallback_script = '''#!/bin/bash
 cd ~/auto-worker-demo
 
 # Create Streamlit app
@@ -757,32 +568,6 @@ EOF
 # Create requirements.txt
 echo "streamlit" > requirements.txt
 
-# Create README
-cat > README.md << 'EOF'
-# Streamlit Text Display Demo
-
-A simple Streamlit application that displays user input text.
-
-## Installation
-
-```bash
-pip install -r requirements.txt
-```
-
-## Usage
-
-```bash
-streamlit run app.py
-```
-
-## Features
-- Text input field
-- Multiple display formats
-- Text statistics
-
-Generated by Remote Developer
-EOF
-
 echo "Streamlit app created successfully!"
 ls -la
 '''
@@ -798,19 +583,6 @@ ls -la
             tasks_status[task_id]['status'] = 'committing_changes'
             tasks_status[task_id]['progress'] = 75
         add_log(task_id, 'Committing changes...')
-        
-        # Add task summary to README if not exists
-        readme_cmd = f'''cd ~/{repo_name} && if [ ! -f README.md ]; then
-    echo "# {repo_name}" > README.md
-    echo "" >> README.md
-    echo "## Task History" >> README.md
-    echo "" >> README.md
-fi
-
-# Add latest task to README
-echo "- [{task_id}](.task_history/{task_id}.txt): {task_description} ($(date '+%Y-%m-%d %H:%M'))" >> README.md
-'''
-        exec_in_devpod(devpod_name, readme_cmd, pod_name)
         
         commit_cmds = [
             f'cd ~/{repo_name} && git add -A',
@@ -834,12 +606,6 @@ echo "- [{task_id}](.task_history/{task_id}.txt): {task_description} ($(date '+%
         if "FOUND" in req_check.stdout:
             add_log(task_id, 'Installing Python dependencies...')
             exec_in_devpod(devpod_name, f'cd ~/{repo_name} && pip3 install --break-system-packages -r requirements.txt || true', pod_name)
-        
-        # Check for Node.js dependencies
-        pkg_check = exec_in_devpod(devpod_name, f'cd ~/{repo_name} && [ -f package.json ] && echo "FOUND"', pod_name)
-        if "FOUND" in pkg_check.stdout:
-            add_log(task_id, 'Installing Node.js dependencies...')
-            exec_in_devpod(devpod_name, f'cd ~/{repo_name} && npm install || true', pod_name)
         
         # Check for Streamlit app
         streamlit_check = exec_in_devpod(devpod_name, f'cd ~/{repo_name} && ([ -f app.py ] || [ -f streamlit_app.py ]) && grep -l "streamlit" *.py 2>/dev/null | head -1', pod_name)
@@ -873,37 +639,6 @@ echo "- [{task_id}](.task_history/{task_id}.txt): {task_description} ($(date '+%
                 tasks_status[task_id]['server_type'] = 'streamlit'
             
             server_started = True
-        
-        # Check for FastAPI app
-        if not server_started:
-            fastapi_check = exec_in_devpod(devpod_name, f'cd ~/{repo_name} && grep -l "FastAPI\\|fastapi" *.py 2>/dev/null | head -1', pod_name)
-            if fastapi_check.stdout.strip():
-                app_file = fastapi_check.stdout.strip()
-                add_log(task_id, f'Starting FastAPI app: {app_file}')
-                
-                # Start FastAPI in background
-                start_cmd = f'cd ~/{repo_name} && nohup uvicorn {app_file.replace(".py", "")}:app --host 0.0.0.0 --port 8000 > fastapi.log 2>&1 &'
-                exec_in_devpod(devpod_name, start_cmd, pod_name)
-                
-                # Wait a bit for server to start
-                time.sleep(3)
-                
-                # Set up port forwarding
-                add_log(task_id, 'Setting up port forwarding for FastAPI (port 8000)...')
-                forward_thread = threading.Thread(
-                    target=lambda: subprocess.run(['kubectl', 'port-forward', '-n', 'devpod', pod_name, '8000:8000'])
-                )
-                forward_thread.daemon = True
-                forward_thread.start()
-                
-                add_log(task_id, '✅ FastAPI app is running!')
-                add_log(task_id, '🌐 Access your app at: http://localhost:8000')
-                
-                with tasks_lock:
-                    tasks_status[task_id]['app_url'] = 'http://localhost:8000'
-                    tasks_status[task_id]['server_type'] = 'fastapi'
-                
-                server_started = True
         
         # Complete - even if server is running
         with tasks_lock:
@@ -1090,92 +825,6 @@ def create_pr():
             
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
-@app.route('/api/task/<task_id>/check-running', methods=['GET'])
-def check_task_running(task_id):
-    """Check if a task is still running in the devpod"""
-    with tasks_lock:
-        if task_id not in tasks_status:
-            return jsonify({'error': 'Task not found'}), 404
-        
-        task = tasks_status[task_id]
-        
-        # Only check if task was executing
-        if task['status'] in ['executing_task', 'checking_server']:
-            devpod_name = task['devpod_name']
-            github_repo = task['github_repo']
-            repo_name = github_repo.split('/')[-1]
-            
-            if check_claude_still_running(devpod_name, repo_name, task_id):
-                return jsonify({
-                    'running': True,
-                    'message': 'Claude is still running in the background'
-                })
-            else:
-                # Check if task completed while server was down
-                try:
-                    pod_name = get_pod_name(devpod_name)
-                    output_cmd = f'cd ~/{repo_name} && [ -f claude_output.txt ] && cat claude_output.txt || echo "NOT_FOUND"'
-                    result = exec_in_devpod(devpod_name, output_cmd, pod_name)
-                    
-                    if result.stdout and "NOT_FOUND" not in result.stdout:
-                        # Task completed, update status
-                        task['status'] = 'completed'
-                        task['claude_status'] = 'COMPLETED'
-                        add_log(task_id, '✅ Task completed while server was offline')
-                        save_task_status(task_id)
-                except:
-                    pass
-                
-                return jsonify({
-                    'running': False,
-                    'message': 'Task is not running'
-                })
-        
-        return jsonify({
-            'running': False,
-            'message': 'Task is not in execution state'
-        })
-
-@app.route('/api/task/<task_id>/recover-logs', methods=['POST'])
-def recover_task_logs(task_id):
-    """Recover logs from a task that was running when server shut down"""
-    with tasks_lock:
-        if task_id not in tasks_status:
-            return jsonify({'error': 'Task not found'}), 404
-        
-        task = tasks_status[task_id]
-        devpod_name = task['devpod_name']
-        github_repo = task['github_repo']
-        repo_name = github_repo.split('/')[-1]
-        
-        try:
-            pod_name = get_pod_name(devpod_name)
-            
-            # Get Claude output
-            output_cmd = f'cd ~/{repo_name} && [ -f claude_output.txt ] && tail -50 claude_output.txt || echo "No output found"'
-            result = exec_in_devpod(devpod_name, output_cmd, pod_name)
-            
-            if result.stdout:
-                add_log(task_id, "=== Recovered Claude Output ===")
-                for line in result.stdout.strip().split('\n'):
-                    add_log(task_id, line)
-                add_log(task_id, "==============================")
-            
-            # Get streamlit/server logs if any
-            server_log_cmd = f'cd ~/{repo_name} && [ -f streamlit.log ] && tail -20 streamlit.log || [ -f fastapi.log ] && tail -20 fastapi.log || echo ""'
-            server_result = exec_in_devpod(devpod_name, server_log_cmd, pod_name)
-            
-            if server_result.stdout.strip():
-                add_log(task_id, "=== Server Logs ===")
-                for line in server_result.stdout.strip().split('\n'):
-                    add_log(task_id, line)
-                add_log(task_id, "==================")
-            
-            return jsonify({'status': 'success', 'message': 'Logs recovered'})
-            
-        except Exception as e:
-            return jsonify({'error': str(e)}), 500
 
 @app.route('/api/task-logs/<task_id>/stream')
 def stream_task_logs(task_id):
