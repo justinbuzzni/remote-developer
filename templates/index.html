@@ -9,8 +9,6 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/react-toastify/9.1.3/ReactToastify.min.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-toastify/9.1.3/react-toastify.min.js"></script>
     <style>
         .log-container {
             font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
@@ -38,6 +36,23 @@
         .log-line-success { color: #10b981; }
         .log-line-info { color: #3b82f6; }
         .log-line-warning { color: #f59e0b; }
+        
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            min-width: 300px;
+            padding: 12px 16px;
+            border-radius: 8px;
+            color: white;
+            font-weight: 500;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+            z-index: 1000;
+            transition: all 0.3s ease;
+        }
+        .toast-success { background-color: #10b981; }
+        .toast-error { background-color: #ef4444; }
+        .toast-info { background-color: #3b82f6; }
     </style>
 </head>
 <body>
@@ -45,7 +60,55 @@
     
     <script type="text/babel">
         const { useState, useEffect, useRef, useCallback } = React;
-        const { ToastContainer, toast } = ReactToastify;
+        
+        // Simple toast implementation
+        const Toast = ({ message, type, onClose }) => {
+            useEffect(() => {
+                const timer = setTimeout(onClose, type === 'error' ? 5000 : 3000);
+                return () => clearTimeout(timer);
+            }, [onClose, type]);
+            
+            return (
+                <div className={`toast toast-${type}`} onClick={onClose}>
+                    {message}
+                </div>
+            );
+        };
+        
+        // Toast hook
+        const useToast = () => {
+            const [toasts, setToasts] = useState([]);
+            
+            const addToast = (message, type = 'info') => {
+                const id = Date.now();
+                setToasts(prev => [...prev, { id, message, type }]);
+            };
+            
+            const removeToast = (id) => {
+                setToasts(prev => prev.filter(toast => toast.id !== id));
+            };
+            
+            const toast = {
+                success: (message) => addToast(message, 'success'),
+                error: (message) => addToast(message, 'error'),
+                info: (message) => addToast(message, 'info')
+            };
+            
+            const ToastContainer = () => (
+                <div>
+                    {toasts.map(toast => (
+                        <Toast
+                            key={toast.id}
+                            message={toast.message}
+                            type={toast.type}
+                            onClose={() => removeToast(toast.id)}
+                        />
+                    ))}
+                </div>
+            );
+            
+            return { toast, ToastContainer };
+        };
         
         // Local storage keys
         const STORAGE_KEYS = {
@@ -54,10 +117,22 @@
             githubToken: 'rd_github_token'
         };
         
+        // Global debug function to test EventSource manually
+        window.testEventSource = function(taskId) {
+            console.log('Manual EventSource test for taskId:', taskId);
+            const es = new EventSource(`/api/task-logs/${taskId}/stream`);
+            es.onopen = (e) => console.log('Manual ES opened:', e);
+            es.onmessage = (e) => console.log('Manual ES message:', e.data);
+            es.onerror = (e) => console.log('Manual ES error:', e);
+            window.testES = es;
+            return es;
+        };
+        
         // Task component
         const Task = ({ task, taskId }) => {
-            const [logs, setLogs] = useState([]);
-            const [showLogs, setShowLogs] = useState(task.status !== 'completed' && task.status !== 'failed');
+            console.log('Task component rendered with taskId:', taskId, 'task status:', task.status);
+            const [logs, setLogs] = useState(task.logs || []);
+            const [showLogs, setShowLogs] = useState(true); // Always show logs by default
             const [isStreaming, setIsStreaming] = useState(false);
             const logsEndRef = useRef(null);
             const eventSourceRef = useRef(null);
@@ -66,9 +141,10 @@
                 logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
             };
             
-            useEffect(() => {
-                scrollToBottom();
-            }, [logs]);
+            // Removed auto-scroll on logs update for better UX
+            // useEffect(() => {
+            //     scrollToBottom();
+            // }, [logs]);
             
             const getLogLineClass = (log) => {
                 if (log.includes('CLAUDE') || log.includes('Claude')) return 'log-line-claude';
@@ -80,13 +156,28 @@
             };
             
             const startLogStream = useCallback(() => {
-                if (isStreaming || eventSourceRef.current) return;
+                if (isStreaming || eventSourceRef.current) {
+                    console.log(`Stream already active for ${taskId}, skipping`);
+                    return;
+                }
+                
+                if (!taskId) {
+                    console.log('No taskId available, cannot start stream');
+                    return;
+                }
                 
                 console.log(`Starting log stream for task ${taskId}`);
                 setIsStreaming(true);
                 
-                const eventSource = new EventSource(`/api/task-logs/${taskId}/stream`);
+                const streamUrl = `/api/task-logs/${taskId}/stream`;
+                console.log(`Creating EventSource for URL: ${streamUrl}`);
+                
+                const eventSource = new EventSource(streamUrl);
                 eventSourceRef.current = eventSource;
+                
+                eventSource.onopen = (event) => {
+                    console.log(`EventSource connection opened for ${taskId}:`, event);
+                };
                 
                 eventSource.onmessage = (event) => {
                     try {
@@ -109,7 +200,8 @@
                 };
                 
                 eventSource.onerror = (error) => {
-                    console.error('SSE Error:', error);
+                    console.error('SSE Error for task', taskId, ':', error);
+                    console.log('EventSource readyState:', eventSource.readyState);
                     setLogs(prev => [...prev, '--- Stream disconnected ---']);
                     eventSource.close();
                     setIsStreaming(false);
@@ -120,8 +212,34 @@
                 if (task.logs && task.logs.length > 0) {
                     setLogs(task.logs);
                 }
-            }, [taskId, isStreaming, task.logs]);
+            }, [taskId]);
             
+            // Update logs when task logs change
+            useEffect(() => {
+                if (task.logs && task.logs.length > logs.length && !isStreaming) {
+                    setLogs(task.logs);
+                }
+            }, [task.logs, logs.length, isStreaming]);
+            
+            // Start streaming when component mounts for running tasks
+            useEffect(() => {
+                console.log(`useEffect for auto-start: taskId=${taskId}, task.status=${task.status}, isStreaming=${isStreaming}, eventSourceExists=${!!eventSourceRef.current}`);
+                
+                // Force start stream if task is running but no EventSource exists
+                if (task.status !== 'completed' && task.status !== 'failed') {
+                    if (!eventSourceRef.current) {
+                        console.log(`Force starting stream for running task ${taskId} (no EventSource exists)`);
+                        setIsStreaming(false); // Reset streaming state
+                        startLogStream();
+                    } else {
+                        console.log(`EventSource already exists for ${taskId}`);
+                    }
+                } else {
+                    console.log(`Not auto-starting stream: status=${task.status}, isStreaming=${isStreaming}`);
+                }
+            }, [task.status, taskId]);
+            
+            // Handle log visibility toggle
             useEffect(() => {
                 if (showLogs && !isStreaming && task.status !== 'completed' && task.status !== 'failed') {
                     startLogStream();
@@ -133,7 +251,7 @@
                         eventSourceRef.current = null;
                     }
                 };
-            }, [showLogs, task.status, startLogStream]);
+            }, [showLogs, task.status]);
             
             const statusColors = {
                 'completed': 'text-green-600',
@@ -238,6 +356,7 @@
                 task_description: ''
             });
             const [isSubmitting, setIsSubmitting] = useState(false);
+            const { toast, ToastContainer } = useToast();
             
             // Update dashboard
             const updateDashboard = async () => {
@@ -283,10 +402,7 @@
                     const response = await axios.post('/api/create-task', formData);
                     const taskId = response.data.task_id;
                     
-                    toast.success(`Task created: ${taskId}`, {
-                        position: "top-right",
-                        autoClose: 3000,
-                    });
+                    toast.success(`Task created: ${taskId}`);
                     
                     // Clear only task description
                     setFormData(prev => ({ ...prev, task_description: '' }));
@@ -294,10 +410,7 @@
                     // Immediate update
                     updateDashboard();
                 } catch (error) {
-                    toast.error(error.response?.data?.error || 'Failed to create task', {
-                        position: "top-right",
-                        autoClose: 5000,
-                    });
+                    toast.error(error.response?.data?.error || 'Failed to create task');
                 } finally {
                     setIsSubmitting(false);
                 }

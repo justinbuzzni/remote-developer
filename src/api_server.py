@@ -667,7 +667,15 @@ ls -la
 @app.route('/')
 def index():
     """Serve the main web interface"""
-    return render_template('index.html')
+    # Serve as static file to avoid Jinja2 template processing
+    import os
+    # Get absolute path to template
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    template_path = os.path.join(current_dir, '..', 'templates', 'index.html')
+    template_path = os.path.abspath(template_path)
+    
+    with open(template_path, 'r', encoding='utf-8') as f:
+        return f.read(), 200, {'Content-Type': 'text/html'}
 
 @app.route('/api/create-task', methods=['POST'])
 def create_task():
