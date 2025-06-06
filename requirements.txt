@@ -19,3 +19,7 @@ rich>=13.7.0
 # Async support
 asyncio>=3.4.3
 aiohttp>=3.9.1
+
+# Web framework
+flask>=3.0.0
+flask-cors>=4.0.0
