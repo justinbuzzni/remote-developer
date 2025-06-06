@@ -23,3 +23,6 @@ aiohttp>=3.9.1
 # Web framework
 flask>=3.0.0
 flask-cors>=4.0.0
+
+# SSE client for log streaming tests
+sseclient-py>=1.0

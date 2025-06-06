@@ -476,7 +476,10 @@ ls -la *.py 2>/dev/null || echo "Python 파일 없음"
 '''
         
         # Write and execute the script
-        script_cmd = f'cd ~/{repo_name} && cat > run_claude.sh << \'EOF\'\n{claude_script}\nEOF && chmod +x run_claude.sh'
+        # Use base64 encoding to avoid shell escaping issues
+        import base64
+        script_encoded = base64.b64encode(claude_script.encode()).decode()
+        script_cmd = f'cd ~/{repo_name} && echo "{script_encoded}" | base64 -d > run_claude.sh && chmod +x run_claude.sh'
         exec_in_devpod(devpod_name, script_cmd, pod_name)
         
         # Execute Claude with simpler streaming
@@ -571,7 +574,9 @@ echo "streamlit" > requirements.txt
 echo "Streamlit app created successfully!"
 ls -la
 '''
-                fallback_cmd = f'cd ~/{repo_name} && cat > fallback.sh << \'EOF\'\n{fallback_script}\nEOF && chmod +x fallback.sh && bash fallback.sh'
+                # Use base64 encoding to avoid shell escaping issues
+                fallback_encoded = base64.b64encode(fallback_script.encode()).decode()
+                fallback_cmd = f'cd ~/{repo_name} && echo "{fallback_encoded}" | base64 -d > fallback.sh && chmod +x fallback.sh && bash fallback.sh'
                 result = exec_in_devpod(devpod_name, fallback_cmd, pod_name)
                 
                 add_log(task_id, "Fallback execution completed")
