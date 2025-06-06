@@ -4,493 +4,439 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Remote Developer Dashboard</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/react-toastify/9.1.3/ReactToastify.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-toastify/9.1.3/react-toastify.min.js"></script>
     <style>
-        .progress-bar {
-            transition: width 0.5s ease-in-out;
-        }
         .log-container {
             font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            background: #1a1a1a;
+            color: #00ff00;
         }
         .log-container::-webkit-scrollbar {
             width: 8px;
-            height: 8px;
         }
         .log-container::-webkit-scrollbar-track {
-            background: #1a1a1a;
+            background: #0a0a0a;
         }
         .log-container::-webkit-scrollbar-thumb {
             background: #4a4a4a;
             border-radius: 4px;
         }
+        .log-line {
+            padding: 2px 0;
+            font-size: 0.875rem;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .log-line-claude { color: #fbbf24; }
+        .log-line-error { color: #ef4444; }
+        .log-line-success { color: #10b981; }
+        .log-line-info { color: #3b82f6; }
+        .log-line-warning { color: #f59e0b; }
     </style>
 </head>
-<body class="bg-gray-100">
-    <div class="container mx-auto p-4">
-        <h1 class="text-3xl font-bold mb-6">Remote Developer Dashboard</h1>
-        
-        <!-- Stats -->
-        <div class="grid grid-cols-4 gap-4 mb-6">
-            <div class="bg-white p-4 rounded-lg shadow">
-                <h3 class="text-gray-500 text-sm">Total Tasks</h3>
-                <p class="text-2xl font-bold" id="totalTasks">0</p>
-            </div>
-            <div class="bg-white p-4 rounded-lg shadow">
-                <h3 class="text-gray-500 text-sm">Running</h3>
-                <p class="text-2xl font-bold text-blue-600" id="runningTasks">0</p>
-            </div>
-            <div class="bg-white p-4 rounded-lg shadow">
-                <h3 class="text-gray-500 text-sm">Completed</h3>
-                <p class="text-2xl font-bold text-green-600" id="completedTasks">0</p>
-            </div>
-            <div class="bg-white p-4 rounded-lg shadow">
-                <h3 class="text-gray-500 text-sm">Failed</h3>
-                <p class="text-2xl font-bold text-red-600" id="failedTasks">0</p>
-            </div>
-        </div>
-        
-        <!-- Create Task Form -->
-        <div class="bg-white p-6 rounded-lg shadow mb-6">
-            <h2 class="text-xl font-semibold mb-4">Create New Task</h2>
-            <form id="createTaskForm" class="space-y-4">
-                <div>
-                    <label class="block text-sm font-medium text-gray-700">DevPod Name</label>
-                    <input type="text" name="devpod_name" required 
-                           class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border"
-                           placeholder="e.g., auto-worker-demo">
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700">GitHub Repository</label>
-                    <input type="text" name="github_repo" required
-                           class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border"
-                           placeholder="e.g., username/repository">
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700">GitHub Token</label>
-                    <input type="password" name="github_token" required
-                           class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border"
-                           placeholder="ghp_...">
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700">Task Description</label>
-                    <textarea name="task_description" required rows="3"
-                              class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border"
-                              placeholder="Describe what you want Claude to do..."></textarea>
-                </div>
-                <button type="submit" 
-                        class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
-                    Create Task
-                </button>
-            </form>
-        </div>
-        
-        <!-- Active Tasks -->
-        <div class="bg-white p-6 rounded-lg shadow">
-            <h2 class="text-xl font-semibold mb-4">Active Tasks</h2>
-            <div id="activeTasks" class="space-y-4">
-                <!-- Tasks will be dynamically added here -->
-            </div>
-        </div>
-    </div>
+<body>
+    <div id="root"></div>
     
-    <!-- Create PR Dialog -->
-    <div id="prDialog" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full">
-        <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
-            <h3 class="text-lg font-medium leading-6 text-gray-900 mb-4">Create Pull Request</h3>
-            <form id="createPRForm" class="space-y-4">
-                <input type="hidden" name="devpod_name">
-                <input type="hidden" name="github_repo">
-                <input type="hidden" name="github_token">
-                <div>
-                    <label class="block text-sm font-medium text-gray-700">PR Title</label>
-                    <input type="text" name="pr_title" required
-                           class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border">
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700">PR Description</label>
-                    <textarea name="pr_body" rows="3"
-                              class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border"></textarea>
-                </div>
-                <div class="flex space-x-2">
-                    <button type="submit" class="bg-purple-500 text-white px-4 py-2 rounded hover:bg-purple-600">
-                        Create PR
-                    </button>
-                    <button type="button" onclick="closePRDialog()" class="bg-gray-300 text-gray-700 px-4 py-2 rounded hover:bg-gray-400">
-                        Cancel
-                    </button>
-                </div>
-            </form>
-        </div>
-    </div>
-    
-    <script>
-        // Store active tasks
-        const activeTasks = new Map();
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback } = React;
+        const { ToastContainer, toast } = ReactToastify;
         
-        // Create task
-        document.getElementById('createTaskForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const formData = new FormData(e.target);
-            const data = Object.fromEntries(formData);
+        // Local storage keys
+        const STORAGE_KEYS = {
+            devpodName: 'rd_devpod_name',
+            githubRepo: 'rd_github_repo',
+            githubToken: 'rd_github_token'
+        };
+        
+        // Task component
+        const Task = ({ task, taskId }) => {
+            const [logs, setLogs] = useState([]);
+            const [showLogs, setShowLogs] = useState(task.status !== 'completed' && task.status !== 'failed');
+            const [isStreaming, setIsStreaming] = useState(false);
+            const logsEndRef = useRef(null);
+            const eventSourceRef = useRef(null);
             
-            try {
-                const response = await axios.post('/api/create-task', data);
-                const taskId = response.data.task_id;
+            const scrollToBottom = () => {
+                logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+            };
+            
+            useEffect(() => {
+                scrollToBottom();
+            }, [logs]);
+            
+            const getLogLineClass = (log) => {
+                if (log.includes('CLAUDE') || log.includes('Claude')) return 'log-line-claude';
+                if (log.includes('Error:') || log.includes('❌')) return 'log-line-error';
+                if (log.includes('✅') || log.includes('completed')) return 'log-line-success';
+                if (log.includes('⚠️') || log.includes('warning')) return 'log-line-warning';
+                if (log.includes('📦') || log.includes('🔧')) return 'log-line-info';
+                return '';
+            };
+            
+            const startLogStream = useCallback(() => {
+                if (isStreaming || eventSourceRef.current) return;
                 
-                // Reset form
-                e.target.reset();
+                console.log(`Starting log stream for task ${taskId}`);
+                setIsStreaming(true);
                 
-                // Start monitoring the new task
-                monitorTask(taskId);
+                const eventSource = new EventSource(`/api/task-logs/${taskId}/stream`);
+                eventSourceRef.current = eventSource;
                 
-                alert(`Task created: ${taskId}`);
-            } catch (error) {
-                alert('Error creating task: ' + (error.response?.data?.error || error.message));
-            }
-        });
-        
-        // Monitor a task
-        function monitorTask(taskId) {
-            // Poll for task status
-            const interval = setInterval(async () => {
-                try {
-                    const response = await axios.get(`/api/task-status/${taskId}`);
-                    const task = response.data;
-                    
-                    updateTaskDisplay(taskId, task);
-                    
-                    if (task.status === 'completed' || task.status === 'failed') {
-                        clearInterval(interval);
+                eventSource.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        console.log(`Log received for ${taskId}:`, data);
+                        
+                        if (data.log) {
+                            setLogs(prev => [...prev, data.log]);
+                        }
+                        
+                        if (data.complete) {
+                            console.log(`Stream complete for ${taskId}`);
+                            eventSource.close();
+                            setIsStreaming(false);
+                            eventSourceRef.current = null;
+                        }
+                    } catch (error) {
+                        console.error('Error parsing SSE data:', error);
                     }
-                } catch (error) {
-                    console.error('Error monitoring task:', error);
-                    clearInterval(interval);
+                };
+                
+                eventSource.onerror = (error) => {
+                    console.error('SSE Error:', error);
+                    setLogs(prev => [...prev, '--- Stream disconnected ---']);
+                    eventSource.close();
+                    setIsStreaming(false);
+                    eventSourceRef.current = null;
+                };
+                
+                // Load initial logs if available
+                if (task.logs && task.logs.length > 0) {
+                    setLogs(task.logs);
                 }
-            }, 2000);
-        }
-        
-        // Update task display
-        function updateTaskDisplay(taskId, task) {
-            let taskElement = document.getElementById(`task-${taskId}`);
+            }, [taskId, isStreaming, task.logs]);
             
-            console.log(`Task ${taskId} data:`, task);
+            useEffect(() => {
+                if (showLogs && !isStreaming && task.status !== 'completed' && task.status !== 'failed') {
+                    startLogStream();
+                }
+                
+                return () => {
+                    if (eventSourceRef.current) {
+                        eventSourceRef.current.close();
+                        eventSourceRef.current = null;
+                    }
+                };
+            }, [showLogs, task.status, startLogStream]);
             
-            if (!taskElement) {
-                taskElement = document.createElement('div');
-                taskElement.id = `task-${taskId}`;
-                taskElement.className = 'border rounded-lg p-4';
-                document.getElementById('activeTasks').prepend(taskElement);
-            }
-            
-            const statusColor = {
+            const statusColors = {
                 'completed': 'text-green-600',
                 'failed': 'text-red-600',
-                'running': 'text-blue-600',
                 'executing_task': 'text-purple-600',
                 'checking_server': 'text-indigo-600',
-                'authentication_required': 'text-orange-600',
-                'interrupted': 'text-yellow-600'
-            }[task.status] || 'text-gray-600';
+                'creating_devpod': 'text-blue-600',
+                'cloning_repository': 'text-cyan-600',
+                'setting_up_claude': 'text-yellow-600',
+                'creating_branch': 'text-pink-600',
+                'committing_changes': 'text-orange-600'
+            };
             
-            const latestLog = task.logs[task.logs.length - 1] || 'Starting...';
+            const statusColor = statusColors[task.status] || 'text-gray-600';
             
-            // Show Claude execution status if available
-            let claudeStatus = '';
-            if (task.claude_status) {
-                const claudeStatusColor = {
-                    'STARTING': 'text-blue-600',
-                    'RUNNING': 'text-purple-600',
-                    'COMPLETED': 'text-green-600',
-                    'TIMEOUT': 'text-orange-600',
-                    'ERROR': 'text-red-600'
-                }[task.claude_status] || 'text-gray-600';
-                
-                claudeStatus = `<span class="text-sm ${claudeStatusColor} ml-2">Claude: ${task.claude_status}</span>`;
-                
-                // Show runtime if Claude is running
-                if (task.claude_status === 'RUNNING' && task.claude_runtime) {
-                    const minutes = Math.floor(task.claude_runtime / 60);
-                    claudeStatus += ` <span class="text-xs text-gray-500">(${minutes}m)</span>`;
-                }
-            }
-            
-            // Show continue button if authentication is required
-            const authButton = task.status === 'authentication_required' ? `
-                <div class="mt-3 bg-orange-50 border border-orange-200 rounded p-3">
-                    <p class="text-sm text-orange-800 mb-2">⚠️ Claude authentication required! Please follow the instructions in the logs above.</p>
-                    <button onclick="continueTask('${taskId}')" 
-                            class="bg-orange-500 text-white px-4 py-2 rounded hover:bg-orange-600 text-sm">
-                        Continue Task (After Authentication)
-                    </button>
-                </div>
-            ` : '';
-            
-            // Show server status
-            let serverStatus = '';
-            if (task.server_running) {
-                const serverType = task.server_type || 'Server';
-                serverStatus = `<span class="inline-flex items-center px-2 py-1 text-xs bg-green-100 text-green-800 rounded ml-2">
-                    <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
-                    </svg>
-                    ${serverType} Running
-                </span>`;
-            }
-            
-            // Show app URL if available
-            const appLink = task.app_url ? `
-                <div class="mt-2">
-                    <a href="${task.app_url}" target="_blank" 
-                       class="inline-flex items-center px-3 py-2 bg-green-500 text-white rounded hover:bg-green-600 text-sm">
-                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
-                                  d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
-                        </svg>
-                        Open App
-                    </a>
-                    ${serverStatus}
-                </div>
-            ` : '';
-            
-            // Show create PR button for completed tasks
-            const prButton = task.status === 'completed' && !task.pr_url ? `
-                <button onclick="showPRDialog('${task.devpod_name}', '${task.github_repo}', '${task.github_token}')" 
-                        class="mt-2 bg-purple-500 text-white px-3 py-1 rounded hover:bg-purple-600 text-sm">
-                    Create PR
-                </button>
-            ` : '';
-            
-            taskElement.innerHTML = `
-                <div class="flex justify-between items-start mb-2">
-                    <div>
-                        <h3 class="font-semibold">${task.devpod_name}</h3>
-                        <p class="text-sm text-gray-600">${task.task_description}</p>
+            return (
+                <div className="border rounded-lg p-4 bg-white shadow-sm hover:shadow-md transition-shadow">
+                    <div className="flex justify-between items-start mb-3">
+                        <div className="flex-1">
+                            <h3 className="font-semibold text-lg">{task.devpod_name}</h3>
+                            <p className="text-sm text-gray-600 mt-1">{task.task_description}</p>
+                        </div>
+                        <div className="text-right ml-4">
+                            <span className={`text-sm font-medium ${statusColor}`}>
+                                {task.status.replace(/_/g, ' ')}
+                            </span>
+                            {task.claude_status && (
+                                <div className="text-xs text-yellow-600 mt-1">
+                                    Claude: {task.claude_status}
+                                </div>
+                            )}
+                        </div>
                     </div>
-                    <div class="text-right">
-                        <span class="text-sm ${statusColor} font-medium">${task.status}</span>
-                        ${claudeStatus}
-                    </div>
-                </div>
-                <div class="w-full bg-gray-200 rounded-full h-2 mb-2">
-                    <div class="bg-blue-500 h-2 rounded-full progress-bar" style="width: ${task.progress}%"></div>
-                </div>
-                <div class="mb-2">
-                    <button onclick="toggleLogs('${taskId}')" class="text-xs text-blue-500 hover:underline">
-                        ${task.status === 'completed' || task.status === 'failed' ? 'Show Logs' : 'Hide Logs'}
-                    </button>
-                    <div id="logs-${taskId}" class="${task.status === 'completed' || task.status === 'failed' ? 'hidden' : ''} log-container mt-2 bg-gray-900 text-green-400 rounded p-3 text-xs font-mono" style="max-height: 400px; min-height: 200px; overflow-y: auto; overflow-x: auto; white-space: pre-wrap; word-break: break-word;">
-                        <div class="text-gray-500 mb-2">Loading logs...</div>
-                        <!-- Logs will be streamed here -->
-                    </div>
-                </div>
-                <p class="text-xs text-gray-500">${latestLog}</p>
-                ${authButton}
-                ${appLink}
-                ${prButton}
-                ${task.pr_url ? `<a href="${task.pr_url}" target="_blank" class="text-blue-500 text-sm hover:underline mt-2 inline-block">View PR</a>` : ''}
-            `;
-            
-            // Start streaming logs if not already started
-            if (!taskElement.dataset.streaming && task.status !== 'completed' && task.status !== 'failed') {
-                taskElement.dataset.streaming = 'true';
-                streamTaskLogs(taskId);
-            }
-            
-            activeTasks.set(taskId, task);
-        }
-        
-        // Update dashboard stats
-        async function updateDashboard() {
-            try {
-                const response = await axios.get('/api/dashboard');
-                const data = response.data;
-                
-                document.getElementById('totalTasks').textContent = data.total_tasks;
-                document.getElementById('runningTasks').textContent = data.running_tasks;
-                document.getElementById('completedTasks').textContent = data.completed_tasks;
-                document.getElementById('failedTasks').textContent = data.failed_tasks;
-                
-                // Update recent tasks
-                data.recent_tasks.forEach((task) => {
-                    const taskId = task.task_id;
-                    updateTaskDisplay(taskId, task);
                     
-                    // Start monitoring if task is active
-                    if (task.status !== 'completed' && task.status !== 'failed' && !activeTasks.has(taskId)) {
-                        monitorTask(taskId);
-                    }
-                });
-            } catch (error) {
-                console.error('Error updating dashboard:', error);
-            }
-        }
-        
-        // Continue task after authentication
-        async function continueTask(taskId) {
-            try {
-                const response = await axios.post(`/api/task/${taskId}/continue`);
-                if (response.data.status === 'ok') {
-                    alert('Task will continue. Please check the logs for progress.');
+                    <div className="w-full bg-gray-200 rounded-full h-2 mb-3">
+                        <div 
+                            className="bg-gradient-to-r from-blue-500 to-blue-600 h-2 rounded-full transition-all duration-500"
+                            style={{ width: `${task.progress}%` }}
+                        />
+                    </div>
                     
-                    // Update the button to show continuing
-                    const taskElement = document.getElementById(`task-${taskId}`);
-                    if (taskElement) {
-                        const authDiv = taskElement.querySelector('.bg-orange-50');
-                        if (authDiv) {
-                            authDiv.innerHTML = `
-                                <p class="text-sm text-green-800">✓ Authentication confirmed. Task is continuing...</p>
-                            `;
-                        }
-                    }
-                }
-            } catch (error) {
-                alert('Error continuing task: ' + (error.response?.data?.error || error.message));
-            }
-        }
+                    <div className="flex items-center justify-between mb-2">
+                        <button
+                            onClick={() => setShowLogs(!showLogs)}
+                            className="text-xs text-blue-500 hover:text-blue-700 focus:outline-none"
+                        >
+                            {showLogs ? '▼ Hide Logs' : '▶ Show Logs'} ({logs.length} lines)
+                        </button>
+                        
+                        {task.app_url && (
+                            <a
+                                href={task.app_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center px-3 py-1 bg-green-500 text-white text-xs rounded hover:bg-green-600 transition-colors"
+                            >
+                                <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                </svg>
+                                Open App
+                            </a>
+                        )}
+                    </div>
+                    
+                    {showLogs && (
+                        <div className="log-container rounded p-3 overflow-y-auto" style={{ maxHeight: '400px', minHeight: '100px' }}>
+                            {logs.length === 0 ? (
+                                <div className="text-gray-500 text-sm">Waiting for logs...</div>
+                            ) : (
+                                logs.map((log, index) => (
+                                    <div key={index} className={`log-line ${getLogLineClass(log)}`}>
+                                        {log}
+                                    </div>
+                                ))
+                            )}
+                            <div ref={logsEndRef} />
+                        </div>
+                    )}
+                    
+                    {task.status === 'completed' && (
+                        <div className="mt-3 text-sm text-gray-600">
+                            Branch: {task.branch_name || 'N/A'}
+                        </div>
+                    )}
+                </div>
+            );
+        };
         
-        // Toggle logs visibility
-        function toggleLogs(taskId) {
-            const logsDiv = document.getElementById(`logs-${taskId}`);
-            if (logsDiv) {
-                logsDiv.classList.toggle('hidden');
-                
-                // Start streaming if not already started
-                const taskElement = document.getElementById(`task-${taskId}`);
-                if (!taskElement.dataset.streaming) {
-                    taskElement.dataset.streaming = 'true';
-                    streamTaskLogs(taskId);
-                }
-            }
-        }
-        
-        // Stream task logs using Server-Sent Events
-        function streamTaskLogs(taskId) {
-            console.log(`Starting log stream for task: ${taskId}`);
-            const logsDiv = document.getElementById(`logs-${taskId}`);
-            if (!logsDiv) {
-                console.error(`Log div not found for task: ${taskId}`);
-                return;
-            }
+        // Main App component
+        const App = () => {
+            const [tasks, setTasks] = useState({});
+            const [stats, setStats] = useState({
+                total: 0,
+                running: 0,
+                completed: 0,
+                failed: 0
+            });
+            const [formData, setFormData] = useState({
+                devpod_name: localStorage.getItem(STORAGE_KEYS.devpodName) || '',
+                github_repo: localStorage.getItem(STORAGE_KEYS.githubRepo) || '',
+                github_token: localStorage.getItem(STORAGE_KEYS.githubToken) || '',
+                task_description: ''
+            });
+            const [isSubmitting, setIsSubmitting] = useState(false);
             
-            // Clear existing event source if any
-            const taskElement = document.getElementById(`task-${taskId}`);
-            if (taskElement && taskElement.eventSource) {
-                taskElement.eventSource.close();
-            }
-            
-            const eventSource = new EventSource(`/api/task-logs/${taskId}/stream`);
-            
-            eventSource.onmessage = (event) => {
+            // Update dashboard
+            const updateDashboard = async () => {
                 try {
-                    const data = JSON.parse(event.data);
-                    console.log(`Received log data for ${taskId}:`, data);
+                    const response = await axios.get('/api/dashboard');
+                    const data = response.data;
                     
-                    if (data.log) {
-                        // Remove loading message if it exists
-                        const loadingMsg = logsDiv.querySelector('div.text-gray-500');
-                        if (loadingMsg && loadingMsg.textContent.includes('Loading logs')) {
-                            loadingMsg.remove();
-                        }
-                        
-                        // Add new log line
-                        const logLine = document.createElement('div');
-                        logLine.textContent = data.log;
-                        logLine.className = 'py-0.5';
-                        
-                        // Highlight Claude status updates
-                        if (data.log.includes('CLAUDE_STATUS:')) {
-                            logLine.className += ' text-yellow-400 font-semibold';
-                        } else if (data.log.includes('CLAUDE_PROGRESS:')) {
-                            logLine.className += ' text-cyan-400';
-                        } else if (data.log.includes('CLAUDE_OUTPUT_PREVIEW:')) {
-                            logLine.className += ' text-purple-400';
-                        } else if (data.log.includes('✅') || data.log.includes('completed')) {
-                            logLine.className += ' text-green-400';
-                        } else if (data.log.includes('❌') || data.log.includes('failed') || data.log.includes('Error:')) {
-                            logLine.className += ' text-red-400';
-                        } else if (data.log.includes('Claude') || data.log.includes('CLAUDE')) {
-                            logLine.className += ' text-yellow-300';
-                        }
-                        
-                        logsDiv.appendChild(logLine);
-                        
-                        // Auto-scroll to bottom
-                        logsDiv.scrollTop = logsDiv.scrollHeight;
-                    }
+                    setStats({
+                        total: data.total_tasks,
+                        running: data.running_tasks,
+                        completed: data.completed_tasks,
+                        failed: data.failed_tasks
+                    });
                     
-                    if (data.complete) {
-                        console.log(`Stream complete for task ${taskId}`);
-                        eventSource.close();
-                        if (taskElement) {
-                            taskElement.dataset.streaming = 'false';
-                        }
-                    }
+                    // Update tasks
+                    const newTasks = {};
+                    data.recent_tasks.forEach(task => {
+                        newTasks[task.task_id] = task;
+                    });
+                    setTasks(newTasks);
                 } catch (error) {
-                    console.error('Error processing log event:', error, event.data);
+                    console.error('Dashboard update error:', error);
+                    toast.error('Failed to update dashboard');
                 }
             };
             
-            eventSource.onerror = (error) => {
-                console.error('Log stream error for task:', taskId, error);
-                // Add error message to logs
-                const errorLine = document.createElement('div');
-                errorLine.textContent = '--- Stream connection lost ---';
-                errorLine.className = 'py-0.5 text-red-400';
-                logsDiv.appendChild(errorLine);
+            useEffect(() => {
+                updateDashboard();
+                const interval = setInterval(updateDashboard, 3000);
+                return () => clearInterval(interval);
+            }, []);
+            
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                setIsSubmitting(true);
                 
-                eventSource.close();
-                if (taskElement) {
-                    taskElement.dataset.streaming = 'false';
+                try {
+                    // Save to localStorage
+                    localStorage.setItem(STORAGE_KEYS.devpodName, formData.devpod_name);
+                    localStorage.setItem(STORAGE_KEYS.githubRepo, formData.github_repo);
+                    localStorage.setItem(STORAGE_KEYS.githubToken, formData.github_token);
+                    
+                    const response = await axios.post('/api/create-task', formData);
+                    const taskId = response.data.task_id;
+                    
+                    toast.success(`Task created: ${taskId}`, {
+                        position: "top-right",
+                        autoClose: 3000,
+                    });
+                    
+                    // Clear only task description
+                    setFormData(prev => ({ ...prev, task_description: '' }));
+                    
+                    // Immediate update
+                    updateDashboard();
+                } catch (error) {
+                    toast.error(error.response?.data?.error || 'Failed to create task', {
+                        position: "top-right",
+                        autoClose: 5000,
+                    });
+                } finally {
+                    setIsSubmitting(false);
                 }
             };
             
-            // Store event source for cleanup
-            if (taskElement) {
-                taskElement.eventSource = eventSource;
-            }
-        }
-        
-        // Show PR dialog
-        function showPRDialog(devpodName, githubRepo, githubToken) {
-            const form = document.getElementById('createPRForm');
-            form.devpod_name.value = devpodName;
-            form.github_repo.value = githubRepo;
-            form.github_token.value = githubToken;
-            form.pr_title.value = '';
-            form.pr_body.value = '';
+            const handleInputChange = (e) => {
+                setFormData({
+                    ...formData,
+                    [e.target.name]: e.target.value
+                });
+            };
             
-            document.getElementById('prDialog').classList.remove('hidden');
-        }
+            return (
+                <div className="min-h-screen bg-gray-50">
+                    <ToastContainer />
+                    
+                    <div className="container mx-auto p-4 max-w-7xl">
+                        <h1 className="text-3xl font-bold mb-6 text-gray-800">Remote Developer Dashboard</h1>
+                        
+                        {/* Stats */}
+                        <div className="grid grid-cols-4 gap-4 mb-6">
+                            <div className="bg-white p-4 rounded-lg shadow-sm">
+                                <h3 className="text-gray-500 text-sm font-medium">Total Tasks</h3>
+                                <p className="text-2xl font-bold mt-1">{stats.total}</p>
+                            </div>
+                            <div className="bg-white p-4 rounded-lg shadow-sm">
+                                <h3 className="text-gray-500 text-sm font-medium">Running</h3>
+                                <p className="text-2xl font-bold text-blue-600 mt-1">{stats.running}</p>
+                            </div>
+                            <div className="bg-white p-4 rounded-lg shadow-sm">
+                                <h3 className="text-gray-500 text-sm font-medium">Completed</h3>
+                                <p className="text-2xl font-bold text-green-600 mt-1">{stats.completed}</p>
+                            </div>
+                            <div className="bg-white p-4 rounded-lg shadow-sm">
+                                <h3 className="text-gray-500 text-sm font-medium">Failed</h3>
+                                <p className="text-2xl font-bold text-red-600 mt-1">{stats.failed}</p>
+                            </div>
+                        </div>
+                        
+                        {/* Create Task Form */}
+                        <div className="bg-white p-6 rounded-lg shadow-sm mb-6">
+                            <h2 className="text-xl font-semibold mb-4">Create New Task</h2>
+                            <form onSubmit={handleSubmit} className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                        DevPod Name
+                                    </label>
+                                    <input
+                                        type="text"
+                                        name="devpod_name"
+                                        value={formData.devpod_name}
+                                        onChange={handleInputChange}
+                                        required
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        placeholder="e.g., auto-worker-demo"
+                                    />
+                                </div>
+                                
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                        GitHub Repository
+                                    </label>
+                                    <input
+                                        type="text"
+                                        name="github_repo"
+                                        value={formData.github_repo}
+                                        onChange={handleInputChange}
+                                        required
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        placeholder="e.g., username/repository"
+                                    />
+                                </div>
+                                
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                        GitHub Token
+                                    </label>
+                                    <input
+                                        type="password"
+                                        name="github_token"
+                                        value={formData.github_token}
+                                        onChange={handleInputChange}
+                                        required
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        placeholder="ghp_..."
+                                    />
+                                </div>
+                                
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                        Task Description
+                                    </label>
+                                    <textarea
+                                        name="task_description"
+                                        value={formData.task_description}
+                                        onChange={handleInputChange}
+                                        required
+                                        rows="3"
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        placeholder="Describe what you want Claude to do..."
+                                    />
+                                </div>
+                                
+                                <button
+                                    type="submit"
+                                    disabled={isSubmitting}
+                                    className={`px-4 py-2 rounded-md text-white font-medium transition-colors ${
+                                        isSubmitting 
+                                            ? 'bg-gray-400 cursor-not-allowed' 
+                                            : 'bg-blue-500 hover:bg-blue-600'
+                                    }`}
+                                >
+                                    {isSubmitting ? 'Creating...' : 'Create Task'}
+                                </button>
+                            </form>
+                        </div>
+                        
+                        {/* Active Tasks */}
+                        <div className="bg-white p-6 rounded-lg shadow-sm">
+                            <h2 className="text-xl font-semibold mb-4">Active Tasks</h2>
+                            <div className="space-y-4">
+                                {Object.keys(tasks).length === 0 ? (
+                                    <p className="text-gray-500 text-center py-8">No tasks yet</p>
+                                ) : (
+                                    Object.entries(tasks)
+                                        .sort((a, b) => new Date(b[1].created_at) - new Date(a[1].created_at))
+                                        .map(([taskId, task]) => (
+                                            <Task key={taskId} taskId={taskId} task={task} />
+                                        ))
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
         
-        // Close PR dialog
-        function closePRDialog() {
-            document.getElementById('prDialog').classList.add('hidden');
-        }
-        
-        // Create PR
-        document.getElementById('createPRForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const formData = new FormData(e.target);
-            const data = Object.fromEntries(formData);
-            
-            try {
-                const response = await axios.post('/api/create-pr', data);
-                if (response.data.status === 'success') {
-                    alert('Pull request created successfully!');
-                    closePRDialog();
-                    updateDashboard();
-                }
-            } catch (error) {
-                alert('Error creating PR: ' + (error.response?.data?.error || error.message));
-            }
-        });
-        
-        // Initial dashboard update
-        updateDashboard();
-        
-        // Update dashboard every 5 seconds
-        setInterval(updateDashboard, 5000);
+        // Render the app
+        ReactDOM.render(<App />, document.getElementById('root'));
     </script>
 </body>
 </html>
