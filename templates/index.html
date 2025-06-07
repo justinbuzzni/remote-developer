@@ -129,7 +129,7 @@
         };
         
         // Task component
-        const Task = ({ task, taskId }) => {
+        const Task = ({ task, taskId, onCommit, onCreatePR }) => {
             console.log('Task component rendered with taskId:', taskId, 'task status:', task.status);
             const [logs, setLogs] = useState(task.logs || []);
             const [showLogs, setShowLogs] = useState(true); // Always show logs by default
@@ -261,8 +261,9 @@
                 'creating_devpod': 'text-blue-600',
                 'cloning_repository': 'text-cyan-600',
                 'setting_up_claude': 'text-yellow-600',
-                'creating_branch': 'text-pink-600',
-                'committing_changes': 'text-orange-600'
+                'preparing_workspace': 'text-pink-600',
+                'reviewing_changes': 'text-orange-600',
+                'interrupted': 'text-gray-600'
             };
             
             const statusColor = statusColors[task.status] || 'text-gray-600';
@@ -332,8 +333,43 @@
                     )}
                     
                     {task.status === 'completed' && (
-                        <div className="mt-3 text-sm text-gray-600">
-                            Branch: {task.branch_name || 'N/A'}
+                        <div className="mt-3">
+                            <div className="text-sm text-gray-600 mb-2">
+                                Branch: {task.current_branch || 'main'}
+                            </div>
+                            
+                            {task.has_changes && (
+                                <div className="flex gap-2 mt-2">
+                                    {!task.is_committed && (
+                                        <button
+                                            onClick={() => onCommit(taskId)}
+                                            className="px-3 py-1 bg-yellow-500 text-white text-sm rounded hover:bg-yellow-600 transition-colors"
+                                        >
+                                            Commit Changes
+                                        </button>
+                                    )}
+                                    
+                                    {task.is_committed && (
+                                        <button
+                                            onClick={() => onCreatePR(taskId)}
+                                            className="px-3 py-1 bg-green-500 text-white text-sm rounded hover:bg-green-600 transition-colors"
+                                        >
+                                            Create PR
+                                        </button>
+                                    )}
+                                </div>
+                            )}
+                            
+                            {task.modified_files && task.modified_files.length > 0 && (
+                                <div className="mt-2 text-xs text-gray-500">
+                                    <div className="font-medium">Modified files:</div>
+                                    <ul className="mt-1">
+                                        {task.modified_files.map((file, idx) => (
+                                            <li key={idx} className="font-mono">{file}</li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>
@@ -421,6 +457,53 @@
                     ...formData,
                     [e.target.name]: e.target.value
                 });
+            };
+            
+            // Helper functions for commit and PR
+            const handleCommit = async (taskId) => {
+                const task = tasks[taskId];
+                const commitMessage = prompt('Enter commit message:', `Task: ${task.task_description}`);
+                if (!commitMessage) return;
+                
+                try {
+                    const response = await axios.post(`/api/task/${taskId}/commit`, {
+                        commit_message: commitMessage
+                    });
+                    
+                    if (response.data.status === 'success') {
+                        showToast('Changes committed successfully', 'success');
+                        // Refresh task status
+                        fetchTasks();
+                    }
+                } catch (error) {
+                    showToast(error.response?.data?.error || 'Failed to commit changes', 'error');
+                }
+            };
+            
+            const handleCreatePR = async (taskId) => {
+                const task = tasks[taskId];
+                const prTitle = prompt('PR Title:', `Task: ${task.task_description.substring(0, 50)}...`);
+                if (!prTitle) return;
+                
+                const prBody = prompt('PR Description:', `Automated task execution:\n\n${task.task_description}`);
+                if (!prBody) return;
+                
+                try {
+                    const response = await axios.post(`/api/task/${taskId}/create-pr`, {
+                        pr_title: prTitle,
+                        pr_body: prBody,
+                        github_token: localStorage.getItem('github_token') || task.github_token
+                    });
+                    
+                    if (response.data.status === 'success') {
+                        showToast('Pull Request created successfully', 'success');
+                        if (response.data.pr_url) {
+                            window.open(response.data.pr_url, '_blank');
+                        }
+                    }
+                } catch (error) {
+                    showToast(error.response?.data?.error || 'Failed to create PR', 'error');
+                }
             };
             
             return (
@@ -538,7 +621,13 @@
                                     Object.entries(tasks)
                                         .sort((a, b) => new Date(b[1].created_at) - new Date(a[1].created_at))
                                         .map(([taskId, task]) => (
-                                            <Task key={taskId} taskId={taskId} task={task} />
+                                            <Task 
+                                                key={taskId} 
+                                                taskId={taskId} 
+                                                task={task} 
+                                                onCommit={handleCommit}
+                                                onCreatePR={handleCreatePR}
+                                            />
                                         ))
                                 )}
                             </div>

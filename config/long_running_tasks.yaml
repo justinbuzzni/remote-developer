@@ -1,0 +1,49 @@
+# Configuration for long-running tasks
+
+# Task execution settings
+task_execution:
+  # Maximum execution time for Claude tasks (in seconds)
+  # 7200 seconds = 2 hours
+  claude_timeout: 7200
+  
+  # Maximum execution time for other operations (in seconds)
+  default_timeout: 120
+  
+  # How often to save task status (every N log entries)
+  status_save_interval: 10
+  
+  # Thread settings
+  use_daemon_threads: false  # Keep threads running after main process exit
+
+# Recovery settings
+recovery:
+  # Check for orphaned tasks on startup
+  check_orphaned_tasks: true
+  
+  # Mark orphaned tasks as 'interrupted' or 'resume'
+  orphaned_task_action: 'interrupted'
+  
+  # Task monitoring interval (seconds)
+  monitor_interval: 30
+
+# Persistence settings
+persistence:
+  # Keep logs in memory (max entries per task)
+  max_memory_logs: 1000
+  
+  # Archive completed tasks after N days
+  archive_after_days: 7
+  
+  # Compress archived tasks
+  compress_archives: true
+
+# Connection settings
+connection:
+  # SSE heartbeat interval (seconds)
+  sse_heartbeat_interval: 30
+  
+  # SSE reconnection timeout (seconds)
+  sse_timeout: 120
+  
+  # Allow multiple SSE connections per task
+  allow_multiple_connections: true

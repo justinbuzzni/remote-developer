@@ -18,6 +18,7 @@ import fcntl
 
 from .remote_developer import RemoteDeveloper
 from .config import Config
+from .task_manager import task_manager
 
 app = Flask(__name__, template_folder='../templates', static_folder='../static')
 CORS(app)
@@ -161,9 +162,10 @@ def add_log(task_id: str, message: str):
             if any(keyword in message.lower() for keyword in ['completed!', 'finished!', 'all tasks finished']):
                 if tasks_status[task_id]['status'] != 'completed':
                     logger.info(f"Auto-detected task completion for {task_id}")
-    
-    # Only save task status periodically to avoid performance issues
-    # save_task_status(task_id)  # Commented out for performance
+            
+            # Periodically save status for long-running tasks (every 10 logs)
+            if len(tasks_status[task_id]['logs']) % 10 == 0:
+                save_task_status(task_id)
     
     # Notify all streams watching this task
     with log_streams_lock:
@@ -564,15 +566,21 @@ EOF'''
         
         add_log(task_id, f'Claude command location: {check_result.stdout.strip()}')
         
-        # Step 4: Create new branch
+        # Step 4: Stay on main branch (no automatic branch creation)
         with tasks_lock:
-            tasks_status[task_id]['status'] = 'creating_branch'
+            tasks_status[task_id]['status'] = 'preparing_workspace'
             tasks_status[task_id]['progress'] = 40
-        add_log(task_id, 'Creating new branch...')
+        add_log(task_id, 'Preparing workspace on main branch...')
         
-        branch_name = f"auto-pr-{int(time.time())}"
-        branch_cmd = f'cd ~/{repo_name} && git checkout -b {branch_name}'
-        exec_in_devpod(devpod_name, branch_cmd, pod_name)
+        # Ensure we're on main/master branch
+        checkout_cmd = f'cd ~/{repo_name} && (git checkout main || git checkout master)'
+        exec_in_devpod(devpod_name, checkout_cmd, pod_name)
+        
+        # Get current branch name for reference
+        get_branch_cmd = f'cd ~/{repo_name} && git branch --show-current'
+        branch_result = exec_in_devpod(devpod_name, get_branch_cmd, pod_name)
+        current_branch = branch_result.stdout.strip()
+        add_log(task_id, f'Working on branch: {current_branch}')
         
         # Step 5: Execute Claude task
         with tasks_lock:
@@ -591,9 +599,10 @@ echo "Task: {task_description}"
 if command -v claude &> /dev/null; then
     echo "Claude 명령어 위치: $(which claude)"
     
-    # Simple Claude execution with line buffering for better streaming
-    echo "Executing Claude with line buffering..."
-    timeout 300 claude --print "{task_description}" 2>&1 | tee claude_output.txt
+    # Claude execution with extended timeout for long-running tasks
+    echo "Executing Claude (timeout: 2 hours)..."
+    # 7200 seconds = 2 hours timeout for very long Claude tasks
+    timeout 7200 claude --print "{task_description}" 2>&1 | tee claude_output.txt
     
     echo ""
     echo "=== Claude 실행 완료 ==="
@@ -744,24 +753,29 @@ ls -la
                     tasks_status[task_id]['last_updated'] = datetime.now().isoformat()
                 save_task_status(task_id)
         
-        # Step 7: Commit changes
-        add_log(task_id, "=== Moving to commit phase ===")
+        # Step 7: Show modified files (no automatic commit)
+        add_log(task_id, "=== Checking modified files ===")
         with tasks_lock:
-            tasks_status[task_id]['status'] = 'committing_changes'
+            tasks_status[task_id]['status'] = 'reviewing_changes'
             tasks_status[task_id]['progress'] = 75
         save_task_status(task_id)  # Save status at this important transition
-        add_log(task_id, 'Committing changes...')
         
-        commit_cmds = [
-            f'cd ~/{repo_name} && git add -A',
-            f'cd ~/{repo_name} && git commit -m "Task: {task_description}" || true'
-        ]
-        
-        for cmd in commit_cmds:
-            add_log(task_id, f"Executing: {cmd.split('&&')[-1].strip()}")
-            result = exec_in_devpod(devpod_name, cmd, pod_name)
-            if result.returncode != 0:
-                add_log(task_id, f"Warning: Command failed with error: {result.stderr}")
+        # Show git status
+        status_cmd = f'cd ~/{repo_name} && git status --short'
+        status_result = exec_in_devpod(devpod_name, status_cmd, pod_name)
+        if status_result.stdout.strip():
+            add_log(task_id, 'Modified files:')
+            for line in status_result.stdout.strip().split('\n'):
+                add_log(task_id, f'  {line}')
+            
+            # Store modified files info
+            with tasks_lock:
+                tasks_status[task_id]['modified_files'] = status_result.stdout.strip().split('\n')
+                tasks_status[task_id]['has_changes'] = True
+        else:
+            add_log(task_id, 'No files were modified')
+            with tasks_lock:
+                tasks_status[task_id]['has_changes'] = False
         
         # Step 8: Check if a server was created and run it
         add_log(task_id, "=== Moving to server check phase ===")
@@ -819,7 +833,7 @@ ls -la
         with tasks_lock:
             tasks_status[task_id]['status'] = 'completed'
             tasks_status[task_id]['progress'] = 100
-            tasks_status[task_id]['branch_name'] = branch_name
+            tasks_status[task_id]['current_branch'] = current_branch
             tasks_status[task_id]['last_updated'] = datetime.now().isoformat()
             if server_started:
                 tasks_status[task_id]['server_running'] = True
@@ -827,9 +841,9 @@ ls -la
         add_log(task_id, f"Task status saved as 'completed' with progress 100%")
         
         if server_started:
-            add_log(task_id, f'✅ Task completed! Server is running. Branch: {branch_name}')
+            add_log(task_id, f'✅ Task completed! Server is running on branch: {current_branch}')
         else:
-            add_log(task_id, f'✅ Task completed! Branch: {branch_name}')
+            add_log(task_id, f'✅ Task completed! Changes are ready on branch: {current_branch}')
             
         # Final completion log
         add_log(task_id, f'🎉 All tasks finished! Status: completed')
@@ -850,6 +864,9 @@ ls -la
         if task_id in tasks_status:
             logger.info(f"Final task status: {tasks_status[task_id].get('status', 'unknown')}")
             save_task_status(task_id)
+        
+        # Unregister task from task manager
+        task_manager.unregister_task(task_id)
 
 @app.route('/')
 def index():
@@ -882,8 +899,14 @@ def create_task():
         args=(task_id, data['devpod_name'], data['github_repo'], 
               data['github_token'], data['task_description'])
     )
-    thread.daemon = True  # Allow main process to exit even if thread is running
+    thread.daemon = False  # Keep thread running even if main process restarts
     thread.start()
+    
+    # Log thread information for monitoring
+    logger.info(f"Started background task {task_id} in thread {thread.name}")
+    
+    # Register task with task manager
+    task_manager.register_task(task_id, thread)
     
     return jsonify({'task_id': task_id})
 
@@ -903,7 +926,18 @@ def get_task_status(task_id):
 def list_tasks():
     """List all tasks"""
     with tasks_lock:
-        return jsonify(list(tasks_status.values()))
+        tasks_list = []
+        for task_id, task_data in tasks_status.items():
+            task_info = dict(task_data)
+            task_info['task_id'] = task_id
+            # Check if task thread is still running
+            if task_id in task_manager.active_tasks:
+                thread_info = task_manager.active_tasks[task_id]
+                task_info['is_running'] = thread_info['thread'].is_alive()
+            else:
+                task_info['is_running'] = False
+            tasks_list.append(task_info)
+        return jsonify(tasks_list)
 
 @app.route('/api/dashboard')
 def dashboard():
@@ -968,9 +1002,162 @@ def continue_task(task_id):
         else:
             return jsonify({'error': 'Task does not require authentication'}), 400
 
+@app.route('/api/task/<task_id>/check-alive')
+def check_task_alive(task_id):
+    """Check if a task is still running"""
+    is_alive = False
+    thread_info = None
+    
+    if task_id in task_manager.active_tasks:
+        info = task_manager.active_tasks[task_id]
+        is_alive = info['thread'].is_alive()
+        thread_info = {
+            'thread_name': info['thread_name'],
+            'started_at': info['started_at'],
+            'is_alive': is_alive
+        }
+    
+    # Get task status
+    task_status = None
+    with tasks_lock:
+        if task_id in tasks_status:
+            task_status = tasks_status[task_id].get('status')
+    
+    return jsonify({
+        'task_id': task_id,
+        'is_alive': is_alive,
+        'thread_info': thread_info,
+        'task_status': task_status
+    })
+
+@app.route('/api/task/<task_id>/commit', methods=['POST'])
+def commit_task_changes(task_id):
+    """Commit changes for a specific task"""
+    data = request.json
+    commit_message = data.get('commit_message', '')
+    
+    with tasks_lock:
+        if task_id not in tasks_status:
+            return jsonify({'error': 'Task not found'}), 404
+        
+        task_data = tasks_status[task_id]
+        if not task_data.get('has_changes', False):
+            return jsonify({'error': 'No changes to commit'}), 400
+    
+    devpod_name = task_data['devpod_name']
+    github_repo = task_data['github_repo']
+    repo_name = github_repo.split('/')[-1]
+    
+    try:
+        pod_name = get_pod_name(devpod_name)
+        
+        # Use provided message or generate one
+        if not commit_message:
+            commit_message = f"Task: {task_data['task_description']}"
+        
+        # Add and commit changes
+        add_log(task_id, f"Committing changes with message: {commit_message}")
+        
+        commit_cmds = [
+            f'cd ~/{repo_name} && git add -A',
+            f'cd ~/{repo_name} && git commit -m "{commit_message}"'
+        ]
+        
+        for cmd in commit_cmds:
+            result = exec_in_devpod(devpod_name, cmd, pod_name)
+            if result.returncode != 0 and "nothing to commit" not in result.stdout:
+                return jsonify({'error': f'Commit failed: {result.stderr}'}), 500
+        
+        add_log(task_id, "✅ Changes committed successfully")
+        
+        # Update task status
+        with tasks_lock:
+            tasks_status[task_id]['is_committed'] = True
+            tasks_status[task_id]['commit_message'] = commit_message
+        save_task_status(task_id)
+        
+        return jsonify({'status': 'success', 'message': 'Changes committed'})
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/task/<task_id>/create-pr', methods=['POST'])
+def create_pr_from_task(task_id):
+    """Create a PR from task changes"""
+    data = request.json
+    
+    with tasks_lock:
+        if task_id not in tasks_status:
+            return jsonify({'error': 'Task not found'}), 404
+        
+        task_data = tasks_status[task_id]
+        if not task_data.get('is_committed', False) and task_data.get('has_changes', False):
+            return jsonify({'error': 'Please commit changes first'}), 400
+    
+    devpod_name = task_data['devpod_name']
+    github_repo = task_data['github_repo']
+    github_token = data.get('github_token', task_data.get('github_token'))
+    pr_title = data.get('pr_title', f"Task: {task_data['task_description'][:50]}...")
+    pr_body = data.get('pr_body', f"Automated task execution:\n\n{task_data['task_description']}")
+    repo_name = github_repo.split('/')[-1]
+    
+    try:
+        pod_name = get_pod_name(devpod_name)
+        
+        # Create a new branch from current state
+        branch_name = f"auto-pr-{int(time.time())}"
+        add_log(task_id, f"Creating new branch: {branch_name}")
+        
+        branch_cmds = [
+            f'cd ~/{repo_name} && git checkout -b {branch_name}',
+            f'cd ~/{repo_name} && git push origin {branch_name}'
+        ]
+        
+        for cmd in branch_cmds:
+            result = exec_in_devpod(devpod_name, cmd, pod_name)
+            if result.returncode != 0:
+                return jsonify({'error': f'Branch operation failed: {result.stderr}'}), 500
+        
+        add_log(task_id, "Branch created and pushed")
+        
+        # Create PR using the existing create_pr logic
+        return create_pr_with_details(devpod_name, github_repo, github_token, 
+                                     pr_title, pr_body, branch_name, pod_name)
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+def create_pr_with_details(devpod_name, github_repo, github_token, pr_title, pr_body, branch_name, pod_name):
+    """Helper function to create PR with given details"""
+    repo_name = github_repo.split('/')[-1]
+    
+    try:
+        # Install gh CLI if needed
+        gh_check = exec_in_devpod(devpod_name, 'which gh', pod_name)
+        if not gh_check.stdout.strip():
+            gh_install = 'curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && apt update && apt install gh -y'
+            exec_in_devpod(devpod_name, gh_install, pod_name)
+        
+        # Authenticate gh with token
+        auth_cmd = f'echo {github_token} | gh auth login --with-token'
+        exec_in_devpod(devpod_name, auth_cmd, pod_name)
+        
+        # Create PR
+        pr_cmd = f'cd ~/{repo_name} && gh pr create --title "{pr_title}" --body "{pr_body}" --base main --head {branch_name}'
+        pr_result = exec_in_devpod(devpod_name, pr_cmd, pod_name)
+        
+        if pr_result.returncode == 0:
+            pr_url = pr_result.stdout.strip()
+            return jsonify({'status': 'success', 'pr_url': pr_url})
+        else:
+            return jsonify({'error': f'Failed to create PR: {pr_result.stderr}'}), 500
+            
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/create-pr', methods=['POST'])
 def create_pr():
-    """Create a pull request for a DevPod"""
+    """Legacy endpoint - Create a pull request for a DevPod"""
     data = request.json
     
     required_fields = ['devpod_name', 'github_repo', 'github_token', 'pr_title']
@@ -996,7 +1183,7 @@ def create_pr():
         if not branch_name or branch_name == 'main' or branch_name == 'master':
             return jsonify({'error': 'Please create and checkout a feature branch first'}), 400
         
-        # Push current branch
+        # Push branch
         push_cmd = f'cd ~/{repo_name} && git push origin {branch_name}'
         push_result = exec_in_devpod(devpod_name, push_cmd, pod_name)
         
@@ -1081,4 +1268,20 @@ def stream_task_logs(task_id):
     return Response(generate(), mimetype="text/event-stream")
 
 if __name__ == '__main__':
+    # Check for orphaned tasks from previous runs
+    orphaned_tasks = task_manager.check_orphaned_tasks()
+    if orphaned_tasks:
+        logger.warning(f"Found {len(orphaned_tasks)} orphaned tasks from previous run:")
+        for task in orphaned_tasks:
+            logger.warning(f"  - {task['task_id']}: {task['status']} (last updated: {task['last_updated']})")
+            # Mark orphaned tasks as interrupted
+            if task['task_id'] in tasks_status:
+                tasks_status[task['task_id']]['status'] = 'interrupted'
+                tasks_status[task['task_id']]['error'] = 'Server was restarted while task was running'
+                save_task_status(task['task_id'])
+    
+    # Start task monitor in background
+    monitor_thread = threading.Thread(target=task_manager.monitor_tasks, daemon=True)
+    monitor_thread.start()
+    
     app.run(host='0.0.0.0', port=15001, debug=False, threaded=True)
