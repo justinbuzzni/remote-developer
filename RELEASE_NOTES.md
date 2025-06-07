@@ -1,5 +1,119 @@
 # Remote Developer Release Notes
 
+## v1.4.0 - Manual Commit/PR Workflow & Long-Running Tasks (2025-06-07)
+
+### 🎉 Major Features
+
+#### Manual Commit and PR Workflow
+- **No Automatic Commits**: Tasks now work on the main branch without auto-committing
+- **Explicit Commit Button**: Users must manually commit changes when ready
+- **Separate PR Creation**: Pull requests are created only when explicitly requested
+- **Review Before Commit**: See all modified files before committing
+- **Flexible Workflow**: Work remains on main branch until user decides to create PR
+
+#### Long-Running Task Support
+- **Extended Timeouts**: Claude execution timeout increased from 5 minutes to 2 hours
+- **Task Persistence**: Tasks survive server restarts and disconnections
+- **Background Execution**: Non-daemon threads continue running after main process exit
+- **Reconnection Support**: Resume watching logs after browser reconnection
+- **Task Health Monitoring**: Check if tasks are still alive with new API endpoint
+
+### 🔧 Technical Improvements
+
+#### New API Endpoints
+- **POST /api/task/{task_id}/commit**: Manually commit task changes
+- **POST /api/task/{task_id}/create-pr**: Create PR from committed changes
+- **GET /api/task/{task_id}/check-alive**: Check if task thread is still running
+
+#### Task Management
+- **TaskManager Class**: Centralized management of long-running tasks
+- **Orphaned Task Detection**: Detects tasks interrupted by server restart
+- **Active Task Registry**: Maintains list of running tasks in active_tasks.json
+- **Periodic Status Saving**: Saves task status every 10 log entries
+
+#### UI Enhancements
+- **Commit Changes Button**: Yellow button appears when changes are detected
+- **Create PR Button**: Green button appears after changes are committed
+- **Modified Files Display**: Shows list of changed files before commit
+- **Branch Display**: Shows current working branch (usually main)
+- **Status Updates**: New statuses for 'preparing_workspace' and 'reviewing_changes'
+
+### 🐛 Bug Fixes
+
+#### Workflow Improvements
+- **Branch Management**: Removed automatic branch creation
+- **Commit Control**: Users have full control over when to commit
+- **PR Timing**: PRs only created when explicitly requested
+
+#### Stability Enhancements
+- **Thread Management**: Fixed daemon thread issues for long-running tasks
+- **Status Persistence**: Improved saving of task status during execution
+- **Timeout Handling**: Better handling of long Claude executions
+
+### 📝 Configuration
+
+#### New Configuration File
+- **config/long_running_tasks.yaml**: Configure timeouts and persistence settings
+- Claude timeout: 7200 seconds (2 hours)
+- Status save interval: Every 10 logs
+- Task monitoring interval: 30 seconds
+
+### 🔍 Implementation Details
+
+#### Workflow Changes
+```
+Old: Auto-create branch → Execute → Auto-commit → Manual PR
+New: Stay on main → Execute → Manual commit → Manual PR
+```
+
+#### Task Lifecycle
+1. Task executes on main branch
+2. Changes are made but not committed
+3. User reviews modified files
+4. User clicks "Commit Changes" when ready
+5. User clicks "Create PR" to open pull request
+
+#### Long-Running Support
+- Tasks tracked in `~/.remote_developer/tasks/`
+- Active tasks saved to `active_tasks.json`
+- Orphaned tasks marked as 'interrupted'
+- Logs preserved across reconnections
+
+### 📋 Breaking Changes
+- Tasks no longer auto-commit changes
+- Default branch is now main (not auto-generated branches)
+- PR creation requires explicit user action
+
+### 🎯 Use Cases
+
+#### Quick Experimentation
+- Run tasks on main branch
+- Test changes without commits
+- Discard unwanted changes easily
+
+#### Controlled Deployment
+- Review all changes before committing
+- Write custom commit messages
+- Create PRs only when ready
+
+#### Long Claude Tasks
+- Run complex tasks taking 30+ minutes
+- Disconnect and reconnect anytime
+- Monitor progress across sessions
+
+### 🚀 Migration Guide
+
+For existing users:
+1. Tasks will now stay on main branch
+2. Look for "Commit Changes" button after task completion
+3. Use "Create PR" button when ready to submit
+4. Check modified files list before committing
+
+---
+
+**Contributors**: Claude Code Assistant
+**Key Feature**: Manual control over commits and PR creation with support for long-running tasks
+
 ## v1.3.0 - Real-time Streaming and Task Completion Fixes (2025-06-07)
 
 ### 🎉 Major Features
