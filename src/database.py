@@ -51,7 +51,7 @@ class MongoDB:
             # Build connection string
             if mongodb_host and mongodb_user and mongodb_password:
                 # Use host-based connection string
-                mongodb_url = f"mongodb://{mongodb_user}:{mongodb_password}@{mongodb_host}"
+                mongodb_url = f"mongodb://{mongodb_user}:{mongodb_password}@{mongodb_host}?directConnection=true"
             else:
                 # Fall back to MONGODB_URL
                 mongodb_url = os.getenv('MONGODB_URL', 'mongodb://localhost:27017/')

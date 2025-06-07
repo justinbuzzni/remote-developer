@@ -36,6 +36,13 @@ CORS(app)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Initialize MongoDB connection
+try:
+    db.connect()
+    logger.info("MongoDB connection initialized")
+except Exception as e:
+    logger.warning(f"MongoDB connection failed, using local storage: {e}")
+
 # Create directory for task persistence
 TASKS_DIR = Path.home() / '.remote_developer' / 'tasks'
 TASKS_DIR.mkdir(parents=True, exist_ok=True)

@@ -48,6 +48,8 @@
 - **Graceful Fallback**: Handles MongoDB connection failures without crashing
 - **Authentication Support**: Works with both authenticated and non-authenticated MongoDB
 - **Timeout Configuration**: Configurable connection timeouts to prevent hanging
+- **Replica Set Support**: Fixed MongoDB connection issues with directConnection=true parameter
+- **Connection Initialization**: Fixed NoneType errors by properly initializing MongoDB connection on API server startup
 
 ### 📝 Configuration
 
