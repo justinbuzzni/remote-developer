@@ -60,13 +60,21 @@ def save_task_status(task_id: str):
     try:
         with tasks_lock:
             if task_id in tasks_status:
+                # Create a copy of task data and convert datetime objects to strings
+                task_data = dict(tasks_status[task_id])
+                
+                # Convert datetime objects to ISO strings
+                for key, value in task_data.items():
+                    if isinstance(value, datetime):
+                        task_data[key] = value.isoformat()
+                
                 # Save to MongoDB
-                save_task_to_db(task_id, tasks_status[task_id])
+                save_task_to_db(task_id, task_data)
                 
                 # Also save to file as backup
                 task_file = TASKS_DIR / f"{task_id}.json"
                 with open(task_file, 'w') as f:
-                    json.dump(tasks_status[task_id], f, indent=2)
+                    json.dump(task_data, f, indent=2, default=str)
     except Exception as e:
         logger.error(f"Failed to save task {task_id}: {e}")
 
@@ -77,20 +85,34 @@ def load_all_tasks():
         all_tasks = db.get_all_tasks(limit=500)
         for task_data in all_tasks:
             task_id = task_data.get('task_id')
-            if task_id:
+            if task_id and isinstance(task_data, dict):
                 tasks_status[task_id] = task_data
                 logger.info(f"Loaded task {task_id} from MongoDB")
+            elif task_id:
+                logger.warning(f"Skipping invalid task data for {task_id}: {type(task_data)}")
         
         # Also check local files for any tasks not in MongoDB
         for task_file in TASKS_DIR.glob("*.json"):
             task_id = task_file.stem
+            
+            # Skip special files that are not tasks
+            if task_id in ['active_tasks', 'task_manager_state']:
+                continue
+                
             if task_id not in tasks_status:
-                with open(task_file, 'r') as f:
-                    task_data = json.load(f)
-                    tasks_status[task_id] = task_data
-                    # Save to MongoDB
-                    save_task_to_db(task_id, task_data)
-                    logger.info(f"Migrated task {task_id} from file to MongoDB")
+                try:
+                    with open(task_file, 'r') as f:
+                        task_data = json.load(f)
+                        # Ensure task_data is a dict and has required fields
+                        if isinstance(task_data, dict) and 'task_id' in task_data:
+                            tasks_status[task_id] = task_data
+                            # Save to MongoDB
+                            save_task_to_db(task_id, task_data)
+                            logger.info(f"Migrated task {task_id} from file to MongoDB")
+                        else:
+                            logger.warning(f"Skipping invalid task file: {task_file}")
+                except Exception as e:
+                    logger.error(f"Failed to migrate task {task_id}: {e}")
     except Exception as e:
         logger.error(f"Failed to load tasks: {e}")
 
@@ -100,14 +122,28 @@ load_all_tasks()
 def create_or_get_devpod(devpod_name: str) -> bool:
     """Create devpod if it doesn't exist"""
     try:
-        # Use full path to devpod
-        devpod_path = '/Users/namsangboy/.local/bin/devpod'
+        # Try to find devpod in common locations
+        devpod_paths = [
+            '/usr/local/bin/devpod',
+            '/home/walter/bin/devpod',
+            '~/bin/devpod',
+            'devpod'  # Try from PATH
+        ]
         
-        # First check if devpod is installed
-        version_result = subprocess.run([devpod_path, 'version'], 
-                                      capture_output=True, text=True)
-        if version_result.returncode != 0:
-            logger.error("DevPod is not accessible. Check installation at: /Users/namsangboy/.local/bin/devpod")
+        devpod_path = None
+        for path in devpod_paths:
+            try:
+                expanded_path = os.path.expanduser(path)
+                result = subprocess.run([expanded_path, 'version'], 
+                                      capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    devpod_path = expanded_path
+                    break
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                continue
+        
+        if not devpod_path:
+            logger.error("DevPod command not found. Please install DevPod: https://devpod.sh/docs/getting-started/install")
             return False
             
         # Check if devpod exists
@@ -454,7 +490,7 @@ def exec_in_devpod_stream_simple(devpod_name: str, command: str, task_id: str, p
 def execute_remote_task(task_id: str, devpod_name: str, github_repo: str, 
                        github_token: str, task_description: str):
     """Execute task in background thread"""
-    devpod_path = '/Users/namsangboy/.local/bin/devpod'
+    # DevPod path will be determined in create_or_get_devpod function
     task_completed = False
     try:
         with tasks_lock:
