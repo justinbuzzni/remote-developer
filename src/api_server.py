@@ -16,9 +16,18 @@ from pathlib import Path
 import select
 import fcntl
 
-from .remote_developer import RemoteDeveloper
-from .config import Config
-from .task_manager import task_manager
+try:
+    # Try relative imports (when running as module)
+    from .remote_developer import RemoteDeveloper
+    from .config import Config
+    from .task_manager import task_manager
+    from .database import db, save_task_to_db, get_task_from_db, add_log_to_db
+except ImportError:
+    # Fall back to absolute imports (when running directly)
+    from remote_developer import RemoteDeveloper
+    from config import Config
+    from task_manager import task_manager
+    from database import db, save_task_to_db, get_task_from_db, add_log_to_db
 
 app = Flask(__name__, template_folder='../templates', static_folder='../static')
 CORS(app)
@@ -40,10 +49,14 @@ log_streams = {}
 log_streams_lock = threading.Lock()
 
 def save_task_status(task_id: str):
-    """Save task status to file"""
+    """Save task status to MongoDB and file (for backup)"""
     try:
         with tasks_lock:
             if task_id in tasks_status:
+                # Save to MongoDB
+                save_task_to_db(task_id, tasks_status[task_id])
+                
+                # Also save to file as backup
                 task_file = TASKS_DIR / f"{task_id}.json"
                 with open(task_file, 'w') as f:
                     json.dump(tasks_status[task_id], f, indent=2)
@@ -51,14 +64,26 @@ def save_task_status(task_id: str):
         logger.error(f"Failed to save task {task_id}: {e}")
 
 def load_all_tasks():
-    """Load all tasks from files on startup"""
+    """Load all tasks from MongoDB on startup"""
     try:
-        for task_file in TASKS_DIR.glob("*.json"):
-            with open(task_file, 'r') as f:
-                task_data = json.load(f)
-                task_id = task_file.stem
+        # Try to load from MongoDB first
+        all_tasks = db.get_all_tasks(limit=500)
+        for task_data in all_tasks:
+            task_id = task_data.get('task_id')
+            if task_id:
                 tasks_status[task_id] = task_data
-                logger.info(f"Loaded task {task_id} from file")
+                logger.info(f"Loaded task {task_id} from MongoDB")
+        
+        # Also check local files for any tasks not in MongoDB
+        for task_file in TASKS_DIR.glob("*.json"):
+            task_id = task_file.stem
+            if task_id not in tasks_status:
+                with open(task_file, 'r') as f:
+                    task_data = json.load(f)
+                    tasks_status[task_id] = task_data
+                    # Save to MongoDB
+                    save_task_to_db(task_id, task_data)
+                    logger.info(f"Migrated task {task_id} from file to MongoDB")
     except Exception as e:
         logger.error(f"Failed to load tasks: {e}")
 
@@ -152,10 +177,21 @@ def create_or_get_devpod(devpod_name: str) -> bool:
         return False
 
 def add_log(task_id: str, message: str):
-    """Add log message and notify streams"""
+    """Add log message to MongoDB and notify streams"""
+    # Save to MongoDB
+    add_log_to_db(task_id, message)
+    
     with tasks_lock:
         if task_id in tasks_status:
+            # Keep recent logs in memory for quick access
+            if 'logs' not in tasks_status[task_id]:
+                tasks_status[task_id]['logs'] = []
+            
+            # Keep only last 100 logs in memory
             tasks_status[task_id]['logs'].append(message)
+            if len(tasks_status[task_id]['logs']) > 100:
+                tasks_status[task_id]['logs'] = tasks_status[task_id]['logs'][-100:]
+            
             tasks_status[task_id]['last_updated'] = datetime.now().isoformat()
             
             # Auto-detect completion from log messages
@@ -924,20 +960,64 @@ def get_task_status(task_id):
 
 @app.route('/api/tasks')
 def list_tasks():
-    """List all tasks"""
-    with tasks_lock:
-        tasks_list = []
-        for task_id, task_data in tasks_status.items():
-            task_info = dict(task_data)
-            task_info['task_id'] = task_id
-            # Check if task thread is still running
-            if task_id in task_manager.active_tasks:
+    """List all tasks from MongoDB"""
+    try:
+        # Get tasks from MongoDB instead of memory
+        tasks = db.get_all_tasks(limit=100)
+        
+        # Add runtime status
+        for task in tasks:
+            task_id = task.get('task_id')
+            if task_id and task_id in task_manager.active_tasks:
                 thread_info = task_manager.active_tasks[task_id]
-                task_info['is_running'] = thread_info['thread'].is_alive()
+                task['is_running'] = thread_info['thread'].is_alive()
             else:
-                task_info['is_running'] = False
-            tasks_list.append(task_info)
-        return jsonify(tasks_list)
+                task['is_running'] = False
+        
+        return jsonify(tasks)
+    except Exception as e:
+        logger.error(f"Failed to list tasks: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/tasks/by-repo')
+def list_tasks_by_repo():
+    """List tasks grouped by repository"""
+    try:
+        grouped_tasks = db.get_tasks_grouped_by_repo()
+        return jsonify(grouped_tasks)
+    except Exception as e:
+        logger.error(f"Failed to get grouped tasks: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/tasks/repo/<path:github_repo>')
+def list_tasks_for_repo(github_repo):
+    """List tasks for a specific repository"""
+    try:
+        tasks = db.get_tasks_by_repo(github_repo, limit=50)
+        
+        # Add runtime status
+        for task in tasks:
+            task_id = task.get('task_id')
+            if task_id and task_id in task_manager.active_tasks:
+                thread_info = task_manager.active_tasks[task_id]
+                task['is_running'] = thread_info['thread'].is_alive()
+            else:
+                task['is_running'] = False
+        
+        return jsonify(tasks)
+    except Exception as e:
+        logger.error(f"Failed to get tasks for repo {github_repo}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/repository-stats')
+def get_repository_stats():
+    """Get statistics for all repositories"""
+    try:
+        stats = db.get_repository_stats()
+        return jsonify(stats)
+    except Exception as e:
+        logger.error(f"Failed to get repository stats: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/dashboard')
 def dashboard():
@@ -1213,6 +1293,20 @@ def create_pr():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/task/<task_id>/logs')
+def get_task_logs(task_id):
+    """Get all logs for a task from MongoDB"""
+    try:
+        logs = db.get_logs(task_id, limit=1000)
+        return jsonify({
+            'task_id': task_id,
+            'logs': [log['message'] for log in logs],
+            'total': len(logs)
+        })
+    except Exception as e:
+        logger.error(f"Failed to get logs for task {task_id}: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/task-logs/<task_id>/stream')
 def stream_task_logs(task_id):
     """Stream task logs using Server-Sent Events"""
@@ -1227,11 +1321,10 @@ def stream_task_logs(task_id):
             log_streams[task_id].append(client_queue)
         
         try:
-            # Send existing logs first
-            with tasks_lock:
-                if task_id in tasks_status:
-                    for log in tasks_status[task_id]['logs']:
-                        yield f"data: {json.dumps({'log': log})}\n\n"
+            # Send existing logs from MongoDB first
+            existing_logs = db.get_logs(task_id, limit=100)
+            for log in existing_logs:
+                yield f"data: {json.dumps({'log': log['message']})}\n\n"
             
             # Stream new logs
             while True:

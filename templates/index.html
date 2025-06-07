@@ -269,7 +269,7 @@
             const statusColor = statusColors[task.status] || 'text-gray-600';
             
             return (
-                <div className="border rounded-lg p-4 bg-white shadow-sm hover:shadow-md transition-shadow">
+                <div id={`task-${taskId}`} className="border rounded-lg p-4 bg-white shadow-sm hover:shadow-md transition-shadow">
                     <div className="flex justify-between items-start mb-3">
                         <div className="flex-1">
                             <h3 className="font-semibold text-lg">{task.devpod_name}</h3>
@@ -379,6 +379,9 @@
         // Main App component
         const App = () => {
             const [tasks, setTasks] = useState({});
+            const [tasksByRepo, setTasksByRepo] = useState({});
+            const [repoStats, setRepoStats] = useState({});
+            const [viewMode, setViewMode] = useState('recent'); // 'recent' or 'by-repo'
             const [stats, setStats] = useState({
                 total: 0,
                 running: 0,
@@ -413,9 +416,29 @@
                         newTasks[task.task_id] = task;
                     });
                     setTasks(newTasks);
+                    
+                    // Also fetch repository grouping if in repo view
+                    if (viewMode === 'by-repo') {
+                        fetchTasksByRepo();
+                    }
                 } catch (error) {
                     console.error('Dashboard update error:', error);
                     toast.error('Failed to update dashboard');
+                }
+            };
+            
+            // Fetch tasks grouped by repository
+            const fetchTasksByRepo = async () => {
+                try {
+                    const response = await axios.get('/api/tasks/by-repo');
+                    setTasksByRepo(response.data);
+                    
+                    // Also fetch repository stats
+                    const statsResponse = await axios.get('/api/repository-stats');
+                    setRepoStats(statsResponse.data);
+                } catch (error) {
+                    console.error('Failed to fetch tasks by repo:', error);
+                    toast.error('Failed to fetch repository data');
                 }
             };
             
@@ -471,12 +494,12 @@
                     });
                     
                     if (response.data.status === 'success') {
-                        showToast('Changes committed successfully', 'success');
+                        toast.success('Changes committed successfully');
                         // Refresh task status
-                        fetchTasks();
+                        updateDashboard();
                     }
                 } catch (error) {
-                    showToast(error.response?.data?.error || 'Failed to commit changes', 'error');
+                    toast.error(error.response?.data?.error || 'Failed to commit changes');
                 }
             };
             
@@ -496,13 +519,13 @@
                     });
                     
                     if (response.data.status === 'success') {
-                        showToast('Pull Request created successfully', 'success');
+                        toast.success('Pull Request created successfully');
                         if (response.data.pr_url) {
                             window.open(response.data.pr_url, '_blank');
                         }
                     }
                 } catch (error) {
-                    showToast(error.response?.data?.error || 'Failed to create PR', 'error');
+                    toast.error(error.response?.data?.error || 'Failed to create PR');
                 }
             };
             
@@ -611,19 +634,49 @@
                             </form>
                         </div>
                         
-                        {/* Active Tasks */}
-                        <div className="bg-white p-6 rounded-lg shadow-sm">
-                            <h2 className="text-xl font-semibold mb-4">Active Tasks</h2>
-                            <div className="space-y-4">
-                                {Object.keys(tasks).length === 0 ? (
-                                    <p className="text-gray-500 text-center py-8">No tasks yet</p>
-                                ) : (
-                                    Object.entries(tasks)
-                                        .sort((a, b) => new Date(b[1].created_at) - new Date(a[1].created_at))
-                                        .map(([taskId, task]) => (
-                                            <Task 
-                                                key={taskId} 
-                                                taskId={taskId} 
+                        {/* View Mode Toggle */}
+                        <div className="bg-white p-4 rounded-lg shadow-sm mb-6">
+                            <div className="flex space-x-4">
+                                <button
+                                    onClick={() => setViewMode('recent')}
+                                    className={`px-4 py-2 rounded-md font-medium transition-colors ${
+                                        viewMode === 'recent'
+                                            ? 'bg-blue-500 text-white'
+                                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                    }`}
+                                >
+                                    Recent Tasks
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        setViewMode('by-repo');
+                                        fetchTasksByRepo();
+                                    }}
+                                    className={`px-4 py-2 rounded-md font-medium transition-colors ${
+                                        viewMode === 'by-repo'
+                                            ? 'bg-blue-500 text-white'
+                                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                    }`}
+                                >
+                                    By Repository
+                                </button>
+                            </div>
+                        </div>
+                        
+                        {/* Tasks Display */}
+                        {viewMode === 'recent' ? (
+                            <div className="bg-white p-6 rounded-lg shadow-sm">
+                                <h2 className="text-xl font-semibold mb-4">Recent Tasks</h2>
+                                <div className="space-y-4">
+                                    {Object.keys(tasks).length === 0 ? (
+                                        <p className="text-gray-500 text-center py-8">No tasks yet</p>
+                                    ) : (
+                                        Object.entries(tasks)
+                                            .sort((a, b) => new Date(b[1].created_at) - new Date(a[1].created_at))
+                                            .map(([taskId, task]) => (
+                                                <Task 
+                                                    key={taskId} 
+                                                    taskId={taskId} 
                                                 task={task} 
                                                 onCommit={handleCommit}
                                                 onCreatePR={handleCreatePR}
@@ -632,6 +685,89 @@
                                 )}
                             </div>
                         </div>
+                        ) : (
+                            <div className="space-y-6">
+                                {Object.keys(tasksByRepo).length === 0 ? (
+                                    <div className="bg-white p-6 rounded-lg shadow-sm">
+                                        <p className="text-gray-500 text-center py-8">No repositories with tasks yet</p>
+                                    </div>
+                                ) : (
+                                    Object.entries(tasksByRepo).map(([repo, repoData]) => (
+                                        <div key={repo} className="bg-white p-6 rounded-lg shadow-sm">
+                                            <div className="flex justify-between items-start mb-4">
+                                                <div>
+                                                    <h3 className="text-lg font-semibold text-gray-800">{repo || 'No Repository'}</h3>
+                                                    {repoStats[repo] && (
+                                                        <div className="flex space-x-4 mt-2 text-sm">
+                                                            <span className="text-gray-600">
+                                                                Total: <span className="font-medium">{repoStats[repo].total}</span>
+                                                            </span>
+                                                            <span className="text-green-600">
+                                                                Completed: <span className="font-medium">{repoStats[repo].completed}</span>
+                                                            </span>
+                                                            <span className="text-red-600">
+                                                                Failed: <span className="font-medium">{repoStats[repo].failed}</span>
+                                                            </span>
+                                                            <span className="text-blue-600">
+                                                                Running: <span className="font-medium">{repoStats[repo].running}</span>
+                                                            </span>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <span className="text-sm text-gray-500">
+                                                    {repoData.stats?.total_tasks || 0} tasks
+                                                </span>
+                                            </div>
+                                            
+                                            <div className="space-y-3">
+                                                {repoData.tasks?.map((task) => (
+                                                    <div key={task.task_id} className="border-l-4 pl-4 py-2 hover:bg-gray-50 transition-colors
+                                                        ${task.status === 'completed' ? 'border-green-500' : 
+                                                          task.status === 'failed' ? 'border-red-500' : 
+                                                          task.status === 'running' ? 'border-blue-500' : 'border-gray-300'}">
+                                                        <div className="flex justify-between items-start">
+                                                            <div className="flex-1">
+                                                                <p className="text-sm font-medium text-gray-800">
+                                                                    {task.task_description.substring(0, 100)}
+                                                                    {task.task_description.length > 100 && '...'}
+                                                                </p>
+                                                                <div className="flex items-center space-x-4 mt-1">
+                                                                    <span className="text-xs text-gray-500">
+                                                                        {new Date(task.created_at).toLocaleString()}
+                                                                    </span>
+                                                                    <span className={`text-xs px-2 py-1 rounded-full
+                                                                        ${task.status === 'completed' ? 'bg-green-100 text-green-700' : 
+                                                                          task.status === 'failed' ? 'bg-red-100 text-red-700' : 
+                                                                          task.status === 'running' ? 'bg-blue-100 text-blue-700' : 
+                                                                          'bg-gray-100 text-gray-700'}`}>
+                                                                        {task.status}
+                                                                    </span>
+                                                                </div>
+                                                            </div>
+                                                            <button
+                                                                onClick={() => {
+                                                                    setViewMode('recent');
+                                                                    // Scroll to the specific task
+                                                                    setTimeout(() => {
+                                                                        const taskElement = document.getElementById(`task-${task.task_id}`);
+                                                                        if (taskElement) {
+                                                                            taskElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                                                        }
+                                                                    }, 100);
+                                                                }}
+                                                                className="text-sm text-blue-600 hover:text-blue-800 ml-4"
+                                                            >
+                                                                View Details →
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
             );

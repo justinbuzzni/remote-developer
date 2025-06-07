@@ -1,5 +1,146 @@
 # Remote Developer Release Notes
 
+## v1.5.0 - MongoDB Integration & Repository Grouping (2025-06-07)
+
+### 🎉 Major Features
+
+#### MongoDB Integration
+- **Persistent Storage**: Migrated from local file storage to MongoDB for better scalability
+- **Automatic Migration**: Existing tasks automatically migrate to MongoDB on first run
+- **Environment Configuration**: MongoDB connection configured via environment variables
+- **Fallback Support**: Gracefully falls back to local storage if MongoDB is unavailable
+- **Connection Pooling**: Optimized database connections with configurable pool sizes
+
+#### Repository-based Task Grouping
+- **By Repository View**: New UI view to see tasks grouped by GitHub repository
+- **Repository Statistics**: View total tasks, success rates, and activity for each repo
+- **Quick Navigation**: Jump from repository view to specific task details
+- **Aggregated Metrics**: See completion rates and task counts per repository
+
+### 🔧 Technical Improvements
+
+#### New API Endpoints
+- **GET /api/tasks/by-repo**: Get all tasks grouped by repository with statistics
+- **GET /api/tasks/repo/{github_repo}**: Get tasks for a specific repository
+- **GET /api/repository-stats**: Get aggregated statistics for all repositories
+- **GET /api/task/{task_id}/logs**: Retrieve all logs for a task from MongoDB
+
+#### Database Schema
+- **Tasks Collection**: Stores task metadata with indexes on task_id, github_repo, and status
+- **Task Logs Collection**: Stores all task logs with efficient querying by task_id
+- **Automatic Indexes**: Performance-optimized indexes created on startup
+- **Timestamp Tracking**: Automatic created_at and last_updated timestamps
+
+#### Frontend Enhancements
+- **View Mode Toggle**: Switch between "Recent Tasks" and "By Repository" views
+- **Repository Cards**: Visual cards showing repository statistics and task lists
+- **Task Status Indicators**: Color-coded status bars for quick task status overview
+- **Smooth Navigation**: Click to navigate from repository view to task details
+
+### 🐛 Bug Fixes
+
+#### UI Fixes
+- **Toast Notifications**: Fixed undefined showToast function references
+- **Update Dashboard**: Fixed fetchTasks() calls to use updateDashboard()
+- **Task ID Anchors**: Added proper IDs for smooth scrolling to specific tasks
+
+#### Connection Handling
+- **Graceful Fallback**: Handles MongoDB connection failures without crashing
+- **Authentication Support**: Works with both authenticated and non-authenticated MongoDB
+- **Timeout Configuration**: Configurable connection timeouts to prevent hanging
+
+### 📝 Configuration
+
+#### Environment Variables
+```bash
+# MongoDB Configuration
+MONGODB_HOST=idc.buzzni.com:32720      # MongoDB host and port
+MONGODB_USER=your_mongodb_user          # MongoDB username
+MONGODB_PASSWORD=your_mongodb_password  # MongoDB password
+MONGODB_DATABASE=remote_developer       # Database name (default: remote_developer)
+
+# Optional: Use full connection URL instead
+MONGODB_URL=mongodb://user:pass@host:port/
+
+# Connection Pool Settings
+MONGODB_MAX_POOL_SIZE=50               # Maximum connection pool size
+MONGODB_MIN_POOL_SIZE=10               # Minimum connection pool size
+MONGODB_TIMEOUT_MS=5000                # Connection timeout in milliseconds
+```
+
+### 🔍 Implementation Details
+
+#### Data Migration
+- Automatic migration of existing local tasks to MongoDB
+- Preserves all task data including logs and status
+- One-time migration on server startup
+- No data loss during migration process
+
+#### Repository Grouping
+```javascript
+// Frontend view modes
+- Recent Tasks: Traditional chronological task list
+- By Repository: Tasks grouped by GitHub repository with stats
+```
+
+#### MongoDB Collections
+```
+tasks:
+  - task_id (unique index)
+  - github_repo (index)
+  - status (index)
+  - created_at (index)
+  - devpod_name, task_description, etc.
+
+task_logs:
+  - task_id (index)
+  - timestamp (index)
+  - message
+```
+
+### 📋 Breaking Changes
+- None - backward compatible with local storage fallback
+
+### 🎯 Benefits
+
+#### Performance
+- Faster task queries with MongoDB indexes
+- Efficient aggregation for repository statistics
+- Reduced file I/O operations
+
+#### Scalability
+- Handle thousands of tasks efficiently
+- Better concurrent access support
+- Optimized for large-scale deployments
+
+#### Analytics
+- Repository-level insights and metrics
+- Task success rate tracking
+- Activity timeline visualization
+
+### 🚀 Migration Guide
+
+For existing users:
+1. Install MongoDB locally or use a remote instance
+2. Update .env with MongoDB connection details
+3. Start the server - tasks will auto-migrate
+4. Use new "By Repository" view for grouped tasks
+
+#### Local MongoDB Setup
+```bash
+# For macOS with Homebrew
+brew install mongodb-community
+brew services start mongodb-community
+
+# Default connection (no auth)
+MONGODB_URL=mongodb://localhost:27017/
+```
+
+---
+
+**Contributors**: Claude Code Assistant
+**Key Feature**: MongoDB integration with repository-based task grouping
+
 ## v1.4.0 - Manual Commit/PR Workflow & Long-Running Tasks (2025-06-07)
 
 ### 🎉 Major Features
