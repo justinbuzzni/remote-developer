@@ -17,6 +17,12 @@
 - **Quick Navigation**: Jump from repository view to specific task details
 - **Aggregated Metrics**: See completion rates and task counts per repository
 
+#### Enhanced Security Model
+- **GitHub Token Security**: Implemented client-side only GitHub token storage for enhanced security
+- **No Server Storage**: GitHub tokens are never stored in MongoDB or server-side storage
+- **Browser localStorage**: Tokens managed exclusively in user's browser localStorage
+- **Security Documentation**: Comprehensive security guide with best practices and threat mitigation
+
 ### 🔧 Technical Improvements
 
 #### New API Endpoints
@@ -50,6 +56,12 @@
 - **Timeout Configuration**: Configurable connection timeouts to prevent hanging
 - **Replica Set Support**: Fixed MongoDB connection issues with directConnection=true parameter
 - **Connection Initialization**: Fixed NoneType errors by properly initializing MongoDB connection on API server startup
+
+#### Security Enhancements
+- **Token Storage Removal**: Removed GitHub token storage from MongoDB database schema
+- **API Security**: Updated API endpoints to require GitHub tokens in requests rather than storing them
+- **Client-Side Management**: Enhanced frontend to manage GitHub tokens exclusively via localStorage
+- **Security Validation**: Added token validation and requirement checks for PR creation
 
 ### 📝 Configuration
 

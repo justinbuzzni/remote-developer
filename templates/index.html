@@ -490,7 +490,8 @@
                 
                 try {
                     const response = await axios.post(`/api/task/${taskId}/commit`, {
-                        commit_message: commitMessage
+                        commit_message: commitMessage,
+                        github_token: localStorage.getItem('github_token')
                     });
                     
                     if (response.data.status === 'success') {

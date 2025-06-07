@@ -467,7 +467,7 @@ def execute_remote_task(task_id: str, devpod_name: str, github_repo: str,
                 'devpod_name': devpod_name,
                 'github_repo': github_repo,
                 'task_description': task_description,
-                'github_token': github_token  # Store for potential recovery
+                # GitHub token is not stored for security reasons - managed by frontend
             }
         
         save_task_status(task_id)
@@ -1183,7 +1183,9 @@ def create_pr_from_task(task_id):
     
     devpod_name = task_data['devpod_name']
     github_repo = task_data['github_repo']
-    github_token = data.get('github_token', task_data.get('github_token'))
+    github_token = data.get('github_token')
+    if not github_token:
+        return jsonify({'error': 'GitHub token is required for PR creation'}), 400
     pr_title = data.get('pr_title', f"Task: {task_data['task_description'][:50]}...")
     pr_body = data.get('pr_body', f"Automated task execution:\n\n{task_data['task_description']}")
     repo_name = github_repo.split('/')[-1]
